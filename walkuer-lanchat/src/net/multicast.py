@@ -1,18 +1,22 @@
 from __future__ import annotations
 
+import io
 import random
 import socket
 import struct
 import threading
+import urllib.request
 from typing import Any
 
 from PySide6.QtCore import QObject, QThread, QTimer, Signal
+from pathlib import Path
 
 from config_store import ConfigStore
 from net import protocol
 from net.discovery import DiscoveryTracker
 from net.http_fileserver import FileServer
 from net.message_store import DedupCache
+from util.paths import avatar_cache_path
 
 
 class MulticastListener(QThread):
@@ -79,11 +83,42 @@ class MulticastClient(QObject):
             pass
 
 
+class AvatarDownloadWorker(QThread):
+    finished = Signal(str, str, str)
+    failed = Signal(str, str)
+
+    def __init__(self, url: str, dest_path: str, sender_id: str, avatar_sha: str) -> None:
+        super().__init__()
+        self._url = url
+        self._dest_path = dest_path
+        self._sender_id = sender_id
+        self._avatar_sha = avatar_sha
+
+    def run(self) -> None:
+        try:
+            with urllib.request.urlopen(self._url, timeout=6) as resp:
+                data = resp.read()
+            if not data:
+                raise ValueError("empty avatar response")
+            try:
+                from PIL import Image
+            except Exception as exc:  # pragma: no cover - pillow missing
+                raise RuntimeError("Pillow unavailable") from exc
+            image = Image.open(io.BytesIO(data))
+            image = image.convert("RGBA")
+            Path(self._dest_path).parent.mkdir(parents=True, exist_ok=True)
+            image.save(self._dest_path, format="PNG")
+            self.finished.emit(self._sender_id, self._avatar_sha, self._dest_path)
+        except Exception:
+            self.failed.emit(self._sender_id, self._avatar_sha)
+
+
 class LanChatNetwork(QObject):
     hello_received = Signal(dict, str)
     chat_received = Signal(dict, str)
     file_received = Signal(dict, str)
     online_count = Signal(int)
+    avatar_updated = Signal(str, str)
 
     def __init__(self, store: ConfigStore) -> None:
         super().__init__()
@@ -95,6 +130,8 @@ class LanChatNetwork(QObject):
         self._file_server = FileServer()
         self._dedup = DedupCache()
         self._http_port = 0
+        self._avatar_fetching: set[str] = set()
+        self._avatar_workers: list[AvatarDownloadWorker] = []
 
         self._hello_timer = QTimer(self)
         self._hello_timer.timeout.connect(self.send_hello)
@@ -116,6 +153,14 @@ class LanChatNetwork(QObject):
         QTimer.singleShot(300, self.send_hello)
 
     def send_hello(self) -> None:
+        if self._store.config.avatar_path and self._store.config.avatar_sha256:
+            port = self._file_server.ensure_running()
+            if port:
+                self._http_port = port
+                self._file_server.register_avatar(
+                    self._store.config.avatar_sha256,
+                    self._store.config.avatar_path,
+                )
         msg = protocol.build_hello(
             self._store.config.sender_id,
             self._store.config.user_name,
@@ -163,11 +208,42 @@ class LanChatNetwork(QObject):
             jitter = random.randint(0, 40)
             QTimer.singleShot(delay + jitter, lambda m=msg: self._client.send(m))
 
+    def _maybe_fetch_avatar(self, msg: dict[str, Any], sender_ip: str) -> None:
+        avatar_sha = msg.get("avatar_sha256") or ""
+        if not avatar_sha:
+            return
+        http_port = int(msg.get("http_port") or 0)
+        if http_port <= 0:
+            return
+        cached_path = avatar_cache_path(avatar_sha)
+        if cached_path.exists() or avatar_sha in self._avatar_fetching:
+            return
+        sender_id = msg.get("sender_id") or ""
+        if not sender_id:
+            return
+        url = f"http://{sender_ip}:{http_port}/avatar/{avatar_sha}"
+        worker = AvatarDownloadWorker(url, str(cached_path), sender_id, avatar_sha)
+        worker.finished.connect(self._on_avatar_fetched)
+        worker.failed.connect(self._on_avatar_failed)
+        self._avatar_fetching.add(avatar_sha)
+        self._avatar_workers.append(worker)
+        worker.start()
+
+    def _on_avatar_fetched(self, sender_id: str, avatar_sha: str, path: str) -> None:
+        self._avatar_fetching.discard(avatar_sha)
+        self._avatar_workers = [w for w in self._avatar_workers if w.isRunning()]
+        self.avatar_updated.emit(sender_id, avatar_sha)
+
+    def _on_avatar_failed(self, sender_id: str, avatar_sha: str) -> None:
+        self._avatar_fetching.discard(avatar_sha)
+        self._avatar_workers = [w for w in self._avatar_workers if w.isRunning()]
+
     def _on_message(self, msg: dict[str, Any], sender_ip: str) -> None:
         msg_type = msg.get("t")
         if msg_type == "HELLO":
             self._discovery.update_hello(msg, sender_ip)
             self.hello_received.emit(msg, sender_ip)
+            self._maybe_fetch_avatar(msg, sender_ip)
             return
 
         message_id = msg.get("message_id")

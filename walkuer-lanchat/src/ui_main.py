@@ -87,10 +87,10 @@ class ChatBubble(QFrame):
         layout = QHBoxLayout(self)
         layout.setSpacing(10)
 
-        avatar = QLabel()
-        avatar.setFixedSize(40, 40)
-        avatar.setPixmap(avatar_pixmap)
-        avatar.setScaledContents(True)
+        self._avatar_label = QLabel()
+        self._avatar_label.setFixedSize(40, 40)
+        self._avatar_label.setPixmap(avatar_pixmap)
+        self._avatar_label.setScaledContents(True)
 
         body = QVBoxLayout()
         header = QHBoxLayout()
@@ -127,9 +127,18 @@ class ChatBubble(QFrame):
             file_layout.addWidget(download_btn)
             body.addWidget(file_box)
 
-        layout.addWidget(avatar)
+        layout.addWidget(self._avatar_label)
         layout.addLayout(body)
         layout.addStretch(1)
+
+    def refresh_avatar(self, avatar_path: str, avatar_sha: str) -> None:
+        pixmap = load_avatar_pixmap(
+            avatar_path,
+            self.msg.get("name") or "",
+            avatar_sha,
+            40,
+        )
+        self._avatar_label.setPixmap(pixmap)
 
 
 class MainWindow(QMainWindow):
@@ -260,6 +269,14 @@ class MainWindow(QMainWindow):
         bubble.download_requested.connect(lambda m=msg: self._download_file(m, sender_ip))
         self.chat_layout.insertWidget(self.chat_layout.count() - 1, bubble)
         self._scroll_to_bottom()
+
+    def refresh_avatar(self, sender_id: str, avatar_sha: str) -> None:
+        for idx in range(self.chat_layout.count()):
+            item = self.chat_layout.itemAt(idx)
+            widget = item.widget()
+            if isinstance(widget, ChatBubble):
+                if widget.msg.get("sender_id") == sender_id and widget.msg.get("avatar_sha256") == avatar_sha:
+                    widget.refresh_avatar("", avatar_sha)
 
     def show_status(self, text: str, timeout_ms: int = 3000) -> None:
         self.status_label.setText(text)

@@ -12,6 +12,8 @@ except Exception:  # pragma: no cover - pillow missing
     Image = None
     ImageDraw = None
 
+from util.paths import avatar_cache_path
+
 
 NEON_GREEN = QColor(57, 255, 20)
 
@@ -72,6 +74,12 @@ def load_avatar_pixmap(avatar_path: str, name: str, avatar_sha: str, size: int) 
         path = Path(avatar_path)
         if path.exists():
             pixmap = QPixmap(str(path))
+            if not pixmap.isNull():
+                return round_pixmap(pixmap, size)
+    if avatar_sha:
+        cached = avatar_cache_path(avatar_sha)
+        if cached.exists():
+            pixmap = QPixmap(str(cached))
             if not pixmap.isNull():
                 return round_pixmap(pixmap, size)
     seed = avatar_sha or name or "walkuer"

@@ -11,6 +11,7 @@ from typing import Optional
 class FileRegistry:
     def __init__(self) -> None:
         self._map: dict[str, Path] = {}
+        self._avatars: dict[str, Path] = {}
         self._lock = threading.Lock()
 
     def register(self, file_id: str, path: str | Path) -> None:
@@ -22,16 +23,31 @@ class FileRegistry:
         with self._lock:
             return self._map.get(file_id)
 
+    def register_avatar(self, sha256: str, path: str | Path) -> None:
+        p = Path(path)
+        with self._lock:
+            self._avatars[sha256] = p
+
+    def get_avatar(self, sha256: str) -> Optional[Path]:
+        with self._lock:
+            return self._avatars.get(sha256)
+
 
 class _Handler(BaseHTTPRequestHandler):
     server: "FileHttpServer"
 
     def do_GET(self) -> None:  # noqa: N802 - required by BaseHTTPRequestHandler
-        if not self.path.startswith("/f/"):
+        if self.path.startswith("/f/"):
+            file_id = self.path.replace("/f/", "", 1).strip("/")
+            path = self.server.registry.get(file_id)
+            download_name = path.name if path else "download.bin"
+        elif self.path.startswith("/avatar/"):
+            sha256 = self.path.replace("/avatar/", "", 1).strip("/")
+            path = self.server.registry.get_avatar(sha256)
+            download_name = f"avatar_{sha256}.png"
+        else:
             self.send_error(404)
             return
-        file_id = self.path.replace("/f/", "", 1).strip("/")
-        path = self.server.registry.get(file_id)
         if not path or not path.exists():
             self.send_error(404)
             return
@@ -41,7 +57,7 @@ class _Handler(BaseHTTPRequestHandler):
             self.send_response(200)
             self.send_header("Content-Type", mime or "application/octet-stream")
             self.send_header("Content-Length", str(size))
-            self.send_header("Content-Disposition", f'attachment; filename="{path.name}"')
+            self.send_header("Content-Disposition", f'attachment; filename="{download_name}"')
             self.end_headers()
             with open(path, "rb") as f:
                 while True:
@@ -98,6 +114,9 @@ class FileServer:
 
     def register_file(self, file_id: str, path: str) -> None:
         self._registry.register(file_id, path)
+
+    def register_avatar(self, sha256: str, path: str) -> None:
+        self._registry.register_avatar(sha256, path)
 
     def shutdown(self) -> None:
         if self._server:

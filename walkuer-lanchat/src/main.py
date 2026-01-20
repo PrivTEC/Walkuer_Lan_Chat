@@ -130,6 +130,7 @@ def main() -> int:
     network.chat_received.connect(handle_incoming)
     network.file_received.connect(handle_incoming)
     network.online_count.connect(window.set_online_count)
+    network.avatar_updated.connect(window.refresh_avatar)
 
     tray = TrayManager(icon, window, window.toggle_visibility, lambda: show_settings(False), show_about, quit_app)
 

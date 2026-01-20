@@ -39,7 +39,16 @@ def downloads_dir() -> Path:
     return base / "Downloads" / "WalkuerLanChat"
 
 
+def avatars_dir() -> Path:
+    return app_data_dir() / "avatars"
+
+
+def avatar_cache_path(sha256: str) -> Path:
+    return avatars_dir() / f"{sha256}.png"
+
+
 def ensure_dirs() -> None:
     app_data_dir().mkdir(parents=True, exist_ok=True)
     logs_dir().mkdir(parents=True, exist_ok=True)
     downloads_dir().mkdir(parents=True, exist_ok=True)
+    avatars_dir().mkdir(parents=True, exist_ok=True)
