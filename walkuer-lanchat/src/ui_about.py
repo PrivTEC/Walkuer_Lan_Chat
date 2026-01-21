@@ -16,6 +16,7 @@ class AboutDialog(QDialog):
 
         layout = QVBoxLayout(self)
         layout.setSpacing(14)
+        layout.setContentsMargins(14, 12, 14, 12)
 
         title = QLabel("Walkür Technology")
         title.setObjectName("headerTitle")
@@ -39,10 +40,10 @@ Bedienung: Schreiben, Senden, Dateien ziehen, Tray für Hintergrundbetrieb
 #############################
 """.strip()
         )
+        info_box.setObjectName("aboutBox")
         info_box.setAlignment(Qt.AlignCenter)
         font = QFont("Consolas", 9)
         info_box.setFont(font)
-        info_box.setStyleSheet("background: #0F0F0F; border: 1px solid #1E1E1E; padding: 10px;")
 
         version = QLabel(f"Version {app_info.VERSION}")
         version.setAlignment(Qt.AlignCenter)

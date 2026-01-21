@@ -5,7 +5,7 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QThread, QTimer, Signal
+from PySide6.QtCore import Qt, QThread, QTimer, Signal, QSize
 from PySide6.QtWidgets import (
     QApplication,
     QFrame,
@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
     QToolButton,
     QVBoxLayout,
     QWidget,
+    QStyle,
 )
 
 import app_info
@@ -86,6 +87,7 @@ class ChatBubble(QFrame):
 
         layout = QHBoxLayout(self)
         layout.setSpacing(10)
+        layout.setContentsMargins(12, 10, 12, 10)
 
         self._avatar_label = QLabel()
         self._avatar_label.setFixedSize(40, 40)
@@ -93,7 +95,9 @@ class ChatBubble(QFrame):
         self._avatar_label.setScaledContents(True)
 
         body = QVBoxLayout()
+        body.setSpacing(6)
         header = QHBoxLayout()
+        header.setContentsMargins(0, 0, 0, 0)
 
         name_label = QLabel(msg.get("name") or "?")
         name_label.setObjectName("nameLabel")
@@ -107,6 +111,7 @@ class ChatBubble(QFrame):
 
         if msg.get("t") == "CHAT":
             text_widget = QLabel()
+            text_widget.setObjectName("chatText")
             text_widget.setTextFormat(Qt.RichText)
             text_widget.setOpenExternalLinks(True)
             text_widget.setTextInteractionFlags(Qt.TextSelectableByMouse | Qt.LinksAccessibleByMouse)
@@ -116,11 +121,15 @@ class ChatBubble(QFrame):
             body.addWidget(text_widget)
         else:
             file_box = QFrame()
+            file_box.setObjectName("fileCard")
             file_layout = QHBoxLayout(file_box)
-            file_layout.setContentsMargins(6, 6, 6, 6)
+            file_layout.setContentsMargins(10, 8, 10, 8)
+            file_layout.setSpacing(8)
             file_label = QLabel(f"{msg.get('filename')} ({_format_size(int(msg.get('size') or 0))})")
+            file_label.setObjectName("fileLabel")
             file_label.setWordWrap(True)
             download_btn = QPushButton("Download")
+            download_btn.setObjectName("downloadButton")
             download_btn.clicked.connect(lambda: self.download_requested.emit(msg))
             file_layout.addWidget(file_label)
             file_layout.addStretch(1)
@@ -160,27 +169,44 @@ class MainWindow(QMainWindow):
         self.setAcceptDrops(True)
 
         central = QWidget()
+        central.setObjectName("appRoot")
         root = QVBoxLayout(central)
-        root.setSpacing(10)
+        root.setSpacing(12)
+        root.setContentsMargins(12, 10, 12, 12)
 
         topbar = QFrame()
         topbar.setObjectName("topBar")
         top_layout = QHBoxLayout(topbar)
-        top_layout.setContentsMargins(8, 6, 8, 6)
+        top_layout.setContentsMargins(10, 6, 10, 6)
+        top_layout.setSpacing(8)
 
-        icon_label = QLabel("◆")
-        icon_label.setStyleSheet("color: #39FF14; font-size: 12pt;")
+        icon_label = QLabel()
+        icon_label.setFixedSize(18, 18)
+        app_icon = QApplication.windowIcon()
+        if not app_icon.isNull():
+            icon_label.setPixmap(app_icon.pixmap(18, 18))
+        else:
+            icon_label.setText("W")
+
         title_label = QLabel("LAN Chat")
-        title_label.setStyleSheet("color: #E6FFE0; font-weight: 600;")
+        title_label.setObjectName("appTitle")
+
+        style = self.style()
 
         settings_btn = QToolButton()
-        settings_btn.setText("⚙")
+        settings_btn.setIcon(style.standardIcon(QStyle.SP_FileDialogDetailedView))
+        settings_btn.setIconSize(QSize(14, 14))
+        settings_btn.setToolTip("Einstellungen")
         settings_btn.clicked.connect(self.open_settings)
         minimize_btn = QToolButton()
-        minimize_btn.setText("_")
+        minimize_btn.setIcon(style.standardIcon(QStyle.SP_TitleBarMinButton))
+        minimize_btn.setIconSize(QSize(12, 12))
+        minimize_btn.setToolTip("Minimieren")
         minimize_btn.clicked.connect(self.showMinimized)
         close_btn = QToolButton()
-        close_btn.setText("X")
+        close_btn.setIcon(style.standardIcon(QStyle.SP_TitleBarCloseButton))
+        close_btn.setIconSize(QSize(12, 12))
+        close_btn.setToolTip("Schließen")
         close_btn.clicked.connect(self._hide_to_tray)
 
         top_layout.addWidget(icon_label)
@@ -200,31 +226,40 @@ class MainWindow(QMainWindow):
         header.setGraphicsEffect(glow)
 
         self.online_label = QLabel("Online im LAN: 1")
+        self.online_label.setObjectName("onlineLabel")
         self.online_label.setAlignment(Qt.AlignCenter)
-        self.online_label.setStyleSheet("color: #9BC49A;")
 
         self.chat_area = QScrollArea()
         self.chat_area.setWidgetResizable(True)
         self.chat_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.chat_area.setFrameShape(QFrame.NoFrame)
 
         self.chat_container = QWidget()
+        self.chat_container.setObjectName("chatCanvas")
         self.chat_layout = QVBoxLayout(self.chat_container)
         self.chat_layout.setSpacing(10)
+        self.chat_layout.setContentsMargins(12, 12, 12, 12)
         self.chat_layout.addStretch(1)
         self.chat_area.setWidget(self.chat_container)
 
         self.attachments_panel = QFrame()
-        self.attachments_panel.setStyleSheet("background: #0F0F0F; border: 1px dashed #1E1E1E; border-radius: 6px;")
+        self.attachments_panel.setObjectName("attachmentsPanel")
         self.attachments_layout = QVBoxLayout(self.attachments_panel)
         self.attachments_layout.setContentsMargins(8, 6, 8, 6)
         self.attachments_panel.hide()
 
         composer = QFrame()
+        composer.setObjectName("composerBar")
         composer_layout = QHBoxLayout(composer)
-        composer_layout.setContentsMargins(0, 0, 0, 0)
+        composer_layout.setContentsMargins(8, 8, 8, 8)
+        composer_layout.setSpacing(8)
 
-        attach_btn = QPushButton("📎")
-        attach_btn.setFixedWidth(40)
+        attach_btn = QPushButton()
+        attach_btn.setObjectName("iconButton")
+        attach_btn.setIcon(style.standardIcon(QStyle.SP_FileIcon))
+        attach_btn.setIconSize(QSize(16, 16))
+        attach_btn.setToolTip("Datei anhängen")
+        attach_btn.setFixedSize(40, 40)
         attach_btn.clicked.connect(self._choose_files)
 
         self.text_input = SendTextEdit()
@@ -234,7 +269,8 @@ class MainWindow(QMainWindow):
         self.text_input.send_requested.connect(self._send_clicked)
 
         send_btn = QPushButton("Senden")
-        send_btn.setFixedWidth(90)
+        send_btn.setObjectName("primaryButton")
+        send_btn.setFixedWidth(110)
         send_btn.clicked.connect(self._send_clicked)
 
         composer_layout.addWidget(attach_btn)

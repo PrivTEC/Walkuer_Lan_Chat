@@ -33,12 +33,14 @@ class SettingsDialog(QDialog):
 
         layout = QVBoxLayout(self)
         layout.setSpacing(12)
+        layout.setContentsMargins(14, 12, 14, 12)
 
         name_label = QLabel("Username")
         self.name_input = QLineEdit(store.config.user_name)
 
         avatar_label = QLabel("Avatar")
         self.avatar_preview = QLabel()
+        self.avatar_preview.setObjectName("avatarPreview")
         self.avatar_preview.setFixedSize(72, 72)
         self.avatar_preview.setAlignment(Qt.AlignCenter)
 
@@ -59,6 +61,7 @@ class SettingsDialog(QDialog):
         self.tray_toggle.setChecked(store.config.tray_notifications)
 
         save_btn = QPushButton("Speichern")
+        save_btn.setObjectName("primaryButton")
         save_btn.clicked.connect(self._save)
 
         layout.addWidget(name_label)
