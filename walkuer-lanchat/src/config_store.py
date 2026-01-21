@@ -40,6 +40,7 @@ class ConfigStore:
         )
 
     def load(self) -> AppConfig:
+        ensure_dirs()
         if self.path.exists():
             try:
                 raw = json.loads(self.path.read_text(encoding="utf-8"))

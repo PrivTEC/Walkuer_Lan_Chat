@@ -24,6 +24,7 @@ class DiscoveryTracker(QObject):
             "avatar_sha256": msg.get("avatar_sha256") or "",
             "http_port": int(msg.get("http_port") or 0),
             "sender_ip": sender_ip,
+            "typing": bool(msg.get("typing", False)),
             "last_seen": now,
         }
         if len(self._peers) != was_count:
@@ -43,3 +44,9 @@ class DiscoveryTracker(QObject):
 
     def peer_info(self, sender_id: str) -> dict[str, Any] | None:
         return self._peers.get(sender_id)
+
+    def snapshot(self) -> list[dict[str, Any]]:
+        return [
+            {"sender_id": sender_id, **info}
+            for sender_id, info in self._peers.items()
+        ]

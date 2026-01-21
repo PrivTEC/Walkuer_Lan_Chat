@@ -5,6 +5,7 @@ import random
 import socket
 import struct
 import threading
+import time
 import urllib.request
 from typing import Any
 
@@ -119,6 +120,7 @@ class LanChatNetwork(QObject):
     file_received = Signal(dict, str)
     online_count = Signal(int)
     avatar_updated = Signal(str, str)
+    peers_updated = Signal(list)
 
     def __init__(self, store: ConfigStore) -> None:
         super().__init__()
@@ -130,6 +132,8 @@ class LanChatNetwork(QObject):
         self._file_server = FileServer()
         self._dedup = DedupCache()
         self._http_port = 0
+        self._typing = False
+        self._last_typing_sent = 0.0
         self._avatar_fetching: set[str] = set()
         self._avatar_workers: list[AvatarDownloadWorker] = []
 
@@ -147,9 +151,11 @@ class LanChatNetwork(QObject):
                 self._store.config.user_name,
                 self._store.config.avatar_sha256,
                 self._http_port,
+                self._typing,
             ),
             _get_local_ip(),
         )
+        self.peers_updated.emit(self._discovery.snapshot())
         QTimer.singleShot(300, self.send_hello)
 
     def send_hello(self) -> None:
@@ -166,6 +172,7 @@ class LanChatNetwork(QObject):
             self._store.config.user_name,
             self._store.config.avatar_sha256,
             self._http_port,
+            self._typing,
         )
         self._client.send(msg)
 
@@ -175,6 +182,28 @@ class LanChatNetwork(QObject):
             self._store.config.user_name,
             self._store.config.avatar_sha256,
             text,
+        )
+        self._send_with_retries(msg)
+        return msg
+
+    def send_chat_with_meta(self, text: str, meta: dict[str, Any]) -> dict[str, Any]:
+        msg = protocol.build_chat(
+            self._store.config.sender_id,
+            self._store.config.user_name,
+            self._store.config.avatar_sha256,
+            text,
+        )
+        msg.update(meta)
+        self._send_with_retries(msg)
+        return msg
+
+    def send_reaction(self, target_id: str, emoji: str) -> dict[str, Any]:
+        msg = protocol.build_reaction(
+            self._store.config.sender_id,
+            self._store.config.user_name,
+            self._store.config.avatar_sha256,
+            target_id,
+            emoji,
         )
         self._send_with_retries(msg)
         return msg
@@ -201,6 +230,15 @@ class LanChatNetwork(QObject):
         )
         self._send_with_retries(msg)
         return msg
+
+    def register_cached_file(self, file_id: str, file_path: str) -> None:
+        port = self._file_server.ensure_running()
+        if not port:
+            return
+        if port != self._http_port:
+            self._http_port = port
+            self.send_hello()
+        self._file_server.register_file(file_id, file_path)
 
     def _send_with_retries(self, msg: dict[str, Any]) -> None:
         self._client.send(msg)
@@ -243,6 +281,7 @@ class LanChatNetwork(QObject):
         if msg_type == "HELLO":
             self._discovery.update_hello(msg, sender_ip)
             self.hello_received.emit(msg, sender_ip)
+            self.peers_updated.emit(self._discovery.snapshot())
             self._maybe_fetch_avatar(msg, sender_ip)
             return
 
@@ -262,6 +301,18 @@ class LanChatNetwork(QObject):
 
     def _prune(self) -> None:
         self._discovery.prune(8)
+        self.peers_updated.emit(self._discovery.snapshot())
+
+    def set_typing(self, typing: bool) -> None:
+        if typing == self._typing:
+            return
+        self._typing = typing
+        now = time.time()
+        if now - self._last_typing_sent < 0.5:
+            QTimer.singleShot(600, self.send_hello)
+            return
+        self._last_typing_sent = now
+        self.send_hello()
 
     def shutdown(self) -> None:
         try:
@@ -271,6 +322,9 @@ class LanChatNetwork(QObject):
             pass
         self._client.close()
         self._file_server.shutdown()
+
+    def peers_snapshot(self) -> list[dict[str, Any]]:
+        return self._discovery.snapshot()
 
 
 def _get_local_ip() -> str:

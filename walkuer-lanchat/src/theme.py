@@ -100,6 +100,121 @@ QLabel#aboutBox {{
     border-radius: 8px;
     padding: 10px;
 }}
+QFrame#metaBar {{
+    background: transparent;
+}}
+QLineEdit#searchInput {{
+    background: #0B0F0E;
+    border: 1px solid {BORDER};
+    border-radius: 8px;
+    padding: 6px 8px;
+}}
+QFrame#userListPanel {{
+    background: #0B0F0E;
+    border: 1px solid {BORDER};
+    border-radius: 12px;
+}}
+QLabel#userListTitle {{
+    color: {NEON_GREEN};
+    font-size: 9pt;
+    letter-spacing: 1px;
+}}
+QFrame#userItem {{
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 8px;
+}}
+QFrame#userItemSelf {{
+    background: #0E1A12;
+    border: 1px solid #2C5C38;
+    border-radius: 8px;
+}}
+QLabel#userName {{
+    color: {TEXT};
+    font-weight: 600;
+}}
+QLabel#userStatus {{
+    color: {TEXT_MUTED};
+    font-size: 8pt;
+}}
+QLabel#userStatusTyping {{
+    color: {NEON_GREEN};
+    font-size: 8pt;
+}}
+QFrame#replyBar {{
+    background: #0B0F0E;
+    border: 1px solid {BORDER};
+    border-radius: 8px;
+}}
+QLabel#replyLabel {{
+    color: {TEXT_MUTED};
+}}
+QToolButton#replyClear {{
+    background: transparent;
+    border: 1px solid {BORDER};
+    border-radius: 6px;
+    padding: 2px 6px;
+}}
+QFrame#replyBox {{
+    background: #0B0F0E;
+    border: 1px solid {BORDER};
+    border-radius: 8px;
+}}
+QLabel#replyName {{
+    color: {NEON_GREEN};
+    font-size: 8pt;
+}}
+QLabel#replyPreview {{
+    color: {TEXT_MUTED};
+    font-size: 8pt;
+}}
+QFrame#reactionBar {{
+    background: transparent;
+}}
+QFrame#reactionChip {{
+    background: #0B0F0E;
+    border: 1px solid {BORDER};
+    border-radius: 10px;
+}}
+QLabel#reactionText {{
+    color: {TEXT};
+    font-size: 8pt;
+}}
+QToolButton#replyButton, QToolButton#reactionButton {{
+    background: #0B0F0E;
+    border: 1px solid {BORDER};
+    border-radius: 6px;
+    padding: 2px 6px;
+    min-width: 22px;
+    font-size: 9pt;
+}}
+QToolButton#replyButton:hover, QToolButton#reactionButton:hover {{
+    border-color: {NEON_GREEN};
+}}
+QLabel#imagePreview {{
+    background: #0B0F0E;
+    border: 1px solid {BORDER};
+    border-radius: 8px;
+}}
+QFrame#emojiBar {{
+    background: #0B0F0E;
+    border: 1px solid {BORDER};
+    border-radius: 10px;
+}}
+QToolButton#emojiButton {{
+    background: #0B0F0E;
+    border: 1px solid {BORDER};
+    border-radius: 8px;
+    padding: 2px 6px;
+    font-size: 11pt;
+}}
+QToolButton#emojiButton:hover {{
+    border-color: {NEON_GREEN};
+}}
+QLabel#fileStatus {{
+    color: {TEXT_MUTED};
+    font-size: 8pt;
+}}
 QFrame#fileCard {{
     background: #0B0F0E;
     border: 1px solid #1E3326;
@@ -181,6 +296,14 @@ QCheckBox::indicator {{
 QCheckBox::indicator:checked {{
     background: {NEON_GREEN};
     border: 1px solid {NEON_GREEN};
+}}
+QMenu {{
+    background: #0B0F0E;
+    color: {TEXT};
+    border: 1px solid {BORDER};
+}}
+QMenu::item:selected {{
+    background: #143018;
 }}
 """
 

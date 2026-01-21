@@ -41,7 +41,13 @@ def parse_message(data: bytes) -> dict[str, Any] | None:
         return None
 
 
-def build_hello(sender_id: str, name: str, avatar_sha256: str, http_port: int) -> dict[str, Any]:
+def build_hello(
+    sender_id: str,
+    name: str,
+    avatar_sha256: str,
+    http_port: int,
+    typing: bool = False,
+) -> dict[str, Any]:
     return {
         "t": "HELLO",
         "v": VERSION,
@@ -49,6 +55,7 @@ def build_hello(sender_id: str, name: str, avatar_sha256: str, http_port: int) -
         "name": name,
         "avatar_sha256": avatar_sha256 or "",
         "http_port": int(http_port or 0),
+        "typing": bool(typing),
         "ts": now_ms(),
     }
 
@@ -62,6 +69,21 @@ def build_chat(sender_id: str, name: str, avatar_sha256: str, text: str) -> dict
         "name": name,
         "avatar_sha256": avatar_sha256 or "",
         "text": text,
+        "ts": now_ms(),
+    }
+
+
+def build_reaction(sender_id: str, name: str, avatar_sha256: str, target_id: str, emoji: str) -> dict[str, Any]:
+    return {
+        "t": "CHAT",
+        "v": VERSION,
+        "message_id": _uuid(),
+        "sender_id": sender_id,
+        "name": name,
+        "avatar_sha256": avatar_sha256 or "",
+        "subtype": "REACT",
+        "target_id": target_id,
+        "emoji": emoji,
         "ts": now_ms(),
     }
 

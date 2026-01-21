@@ -4,17 +4,23 @@ import os
 import urllib.parse
 import urllib.request
 from pathlib import Path
+from typing import Any
 
 from PySide6.QtCore import Qt, QThread, QTimer, Signal, QSize
+from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QApplication,
+    QDialog,
     QFrame,
     QGraphicsDropShadowEffect,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QMainWindow,
+    QMenu,
     QPushButton,
     QScrollArea,
+    QSizePolicy,
     QStatusBar,
     QTextEdit,
     QToolButton,
@@ -28,7 +34,7 @@ from config_store import ConfigStore
 from net import protocol
 from util.images import load_avatar_pixmap
 from util.markdown_render import render_markdown
-from util.paths import downloads_dir
+from util.paths import attachment_cache_path, downloads_dir
 from util.timefmt import fmt_time
 
 
@@ -77,13 +83,148 @@ class DownloadWorker(QThread):
             self.failed.emit(self._file_name, str(exc))
 
 
+class ImageFetchWorker(QThread):
+    finished = Signal(str)
+    failed = Signal(str)
+
+    def __init__(self, url: str, dest_path: str) -> None:
+        super().__init__()
+        self._url = url
+        self._dest_path = dest_path
+
+    def run(self) -> None:
+        try:
+            req = urllib.request.Request(self._url, headers={"User-Agent": "WalkuerLanChat"})
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                data = resp.read()
+            if not data:
+                raise ValueError("empty image response")
+            Path(self._dest_path).parent.mkdir(parents=True, exist_ok=True)
+            with open(self._dest_path, "wb") as f:
+                f.write(data)
+            self.finished.emit(self._dest_path)
+        except Exception:
+            self.failed.emit(self._dest_path)
+
+
+class ClickableLabel(QLabel):
+    clicked = Signal()
+
+    def mousePressEvent(self, event):  # noqa: N802 - Qt naming
+        if event.button() == Qt.LeftButton:
+            self.clicked.emit()
+        super().mousePressEvent(event)
+
+
+class ImagePreviewDialog(QDialog):
+    def __init__(self, image_path: str, parent=None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Bildvorschau")
+        self.setModal(True)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(10, 10, 10, 10)
+
+        pixmap = QPixmap(image_path)
+        label = QLabel()
+        label.setAlignment(Qt.AlignCenter)
+        label.setPixmap(pixmap)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setWidget(label)
+        layout.addWidget(scroll)
+
+        screen = QApplication.primaryScreen()
+        if screen:
+            avail = screen.availableGeometry()
+            w = min(int(avail.width() * 0.8), max(480, pixmap.width() + 40))
+            h = min(int(avail.height() * 0.8), max(360, pixmap.height() + 80))
+            self.resize(w, h)
+class UserListItem(QFrame):
+    def __init__(
+        self,
+        sender_id: str,
+        name: str,
+        avatar_path: str,
+        avatar_sha: str,
+        typing: bool,
+        is_self: bool,
+        parent=None,
+    ) -> None:
+        super().__init__(parent)
+        self.sender_id = sender_id
+        self.avatar_sha = avatar_sha
+        self._is_self = is_self
+        self.setObjectName("userItemSelf" if is_self else "userItem")
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(8, 6, 8, 6)
+        layout.setSpacing(8)
+
+        self._avatar = QLabel()
+        self._avatar.setFixedSize(28, 28)
+        self._avatar.setScaledContents(True)
+
+        labels = QVBoxLayout()
+        labels.setSpacing(2)
+
+        self._name_label = QLabel()
+        self._name_label.setObjectName("userName")
+
+        self._status_label = QLabel()
+        self._status_label.setObjectName("userStatus")
+
+        labels.addWidget(self._name_label)
+        labels.addWidget(self._status_label)
+
+        layout.addWidget(self._avatar)
+        layout.addLayout(labels)
+        layout.addStretch(1)
+
+        self.update_display(name, avatar_path, avatar_sha, typing)
+
+    def update_display(self, name: str, avatar_path: str, avatar_sha: str, typing: bool) -> None:
+        self.avatar_sha = avatar_sha
+        label = name or "User"
+        if self._is_self:
+            label = f"{label} (Du)"
+        self._name_label.setText(label)
+
+        pixmap = load_avatar_pixmap(avatar_path, name, avatar_sha, 28)
+        self._avatar.setPixmap(pixmap)
+
+        if typing:
+            self._status_label.setText("tippt...")
+            self._status_label.setObjectName("userStatusTyping")
+        else:
+            self._status_label.setText("online")
+            self._status_label.setObjectName("userStatus")
+        self._status_label.style().unpolish(self._status_label)
+        self._status_label.style().polish(self._status_label)
+
+    def refresh_avatar(self, avatar_path: str, avatar_sha: str, name: str) -> None:
+        self.avatar_sha = avatar_sha
+        pixmap = load_avatar_pixmap(avatar_path, name, avatar_sha, 28)
+        self._avatar.setPixmap(pixmap)
+
+
 class ChatBubble(QFrame):
+    reply_requested = Signal(dict)
+    reaction_requested = Signal(dict, str)
     download_requested = Signal(dict)
+    image_clicked = Signal(str)
 
     def __init__(self, msg: dict, avatar_pixmap, is_self: bool, parent=None) -> None:
         super().__init__(parent)
         self.msg = msg
+        self._reactions: dict[str, set[str]] = {}
+        self._file_status: QLabel | None = None
+        self._preview_label: ClickableLabel | None = None
+        self._preview_path: str | None = None
+
         self.setObjectName("chatBubbleSelf" if is_self else "chatBubble")
+        self.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Minimum)
 
         layout = QHBoxLayout(self)
         layout.setSpacing(10)
@@ -103,11 +244,42 @@ class ChatBubble(QFrame):
         name_label.setObjectName("nameLabel")
         time_label = QLabel(fmt_time(msg.get("ts") or 0))
         time_label.setObjectName("timeLabel")
+
+        reply_btn = QToolButton()
+        reply_btn.setObjectName("replyButton")
+        reply_btn.setText("↩")
+        reply_btn.setToolTip("Antworten")
+        reply_btn.clicked.connect(lambda: self.reply_requested.emit(self.msg))
+
+        react_btn = QToolButton()
+        react_btn.setObjectName("reactionButton")
+        react_btn.setText("★")
+        react_btn.setToolTip("Reagieren")
+        react_btn.clicked.connect(self._open_reaction_menu)
+
         header.addWidget(name_label)
         header.addStretch(1)
+        header.addWidget(reply_btn)
+        header.addWidget(react_btn)
         header.addWidget(time_label)
 
         body.addLayout(header)
+
+        reply_to = msg.get("reply_to")
+        if reply_to:
+            reply_box = QFrame()
+            reply_box.setObjectName("replyBox")
+            reply_layout = QVBoxLayout(reply_box)
+            reply_layout.setContentsMargins(8, 6, 8, 6)
+            reply_layout.setSpacing(2)
+            reply_name = QLabel(msg.get("reply_name") or "Antwort")
+            reply_name.setObjectName("replyName")
+            reply_preview = QLabel(_trim_text(msg.get("reply_preview") or ""))
+            reply_preview.setObjectName("replyPreview")
+            reply_preview.setWordWrap(True)
+            reply_layout.addWidget(reply_name)
+            reply_layout.addWidget(reply_preview)
+            body.addWidget(reply_box)
 
         if msg.get("t") == "CHAT":
             text_widget = QLabel()
@@ -122,19 +294,43 @@ class ChatBubble(QFrame):
         else:
             file_box = QFrame()
             file_box.setObjectName("fileCard")
-            file_layout = QHBoxLayout(file_box)
+            file_layout = QVBoxLayout(file_box)
             file_layout.setContentsMargins(10, 8, 10, 8)
-            file_layout.setSpacing(8)
+            file_layout.setSpacing(6)
+
+            self._preview_label = ClickableLabel()
+            self._preview_label.setObjectName("imagePreview")
+            self._preview_label.setFixedSize(240, 160)
+            self._preview_label.setScaledContents(False)
+            self._preview_label.hide()
+            self._preview_label.clicked.connect(self._on_preview_clicked)
+
             file_label = QLabel(f"{msg.get('filename')} ({_format_size(int(msg.get('size') or 0))})")
             file_label.setObjectName("fileLabel")
             file_label.setWordWrap(True)
+
+            action_row = QHBoxLayout()
+            self._file_status = QLabel("Bereit")
+            self._file_status.setObjectName("fileStatus")
             download_btn = QPushButton("Download")
             download_btn.setObjectName("downloadButton")
             download_btn.clicked.connect(lambda: self.download_requested.emit(msg))
+            action_row.addWidget(self._file_status)
+            action_row.addStretch(1)
+            action_row.addWidget(download_btn)
+
+            file_layout.addWidget(self._preview_label)
             file_layout.addWidget(file_label)
-            file_layout.addStretch(1)
-            file_layout.addWidget(download_btn)
+            file_layout.addLayout(action_row)
             body.addWidget(file_box)
+
+        self._reaction_bar = QFrame()
+        self._reaction_bar.setObjectName("reactionBar")
+        self._reaction_layout = QHBoxLayout(self._reaction_bar)
+        self._reaction_layout.setContentsMargins(0, 0, 0, 0)
+        self._reaction_layout.setSpacing(6)
+        self._reaction_bar.hide()
+        body.addWidget(self._reaction_bar)
 
         layout.addWidget(self._avatar_label)
         layout.addLayout(body)
@@ -149,10 +345,84 @@ class ChatBubble(QFrame):
         )
         self._avatar_label.setPixmap(pixmap)
 
+    def set_download_status(self, text: str) -> None:
+        if self._file_status is not None:
+            self._file_status.setText(text)
+
+    def set_image_preview(self, path: str) -> None:
+        if not self._preview_label:
+            return
+        pixmap = QPixmap(path)
+        if pixmap.isNull():
+            return
+        self._preview_path = path
+        scaled = pixmap.scaled(
+            self._preview_label.size(),
+            Qt.KeepAspectRatio,
+            Qt.SmoothTransformation,
+        )
+        self._preview_label.setPixmap(scaled)
+        self._preview_label.show()
+
+    def _on_preview_clicked(self) -> None:
+        if self._preview_path:
+            self.image_clicked.emit(self._preview_path)
+
+    def matches_filter(self, query: str) -> bool:
+        q = (query or "").strip().lower()
+        if not q:
+            return True
+        fields = [
+            self.msg.get("name") or "",
+            self.msg.get("text") or "",
+            self.msg.get("filename") or "",
+            self.msg.get("reply_preview") or "",
+        ]
+        return any(q in str(field).lower() for field in fields)
+
+    def apply_reaction(self, emoji: str, sender_id: str) -> None:
+        if not emoji or not sender_id:
+            return
+        senders = self._reactions.setdefault(emoji, set())
+        if sender_id in senders:
+            return
+        senders.add(sender_id)
+        self._render_reactions()
+
+    def _render_reactions(self) -> None:
+        while self._reaction_layout.count():
+            item = self._reaction_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+        if not self._reactions:
+            self._reaction_bar.hide()
+            return
+        for emoji, senders in self._reactions.items():
+            chip = QFrame()
+            chip.setObjectName("reactionChip")
+            chip_layout = QHBoxLayout(chip)
+            chip_layout.setContentsMargins(6, 2, 6, 2)
+            chip_layout.setSpacing(4)
+            label = QLabel(f"{emoji} {len(senders)}")
+            label.setObjectName("reactionText")
+            chip_layout.addWidget(label)
+            self._reaction_layout.addWidget(chip)
+        self._reaction_layout.addStretch(1)
+        self._reaction_bar.show()
+
+    def _open_reaction_menu(self) -> None:
+        menu = QMenu(self)
+        for emoji in ["👍", "⚡", "🔥", "💬", "✅"]:
+            action = menu.addAction(emoji)
+            action.triggered.connect(lambda _, e=emoji: self.reaction_requested.emit(self.msg, e))
+        menu.exec(self.mapToGlobal(self.rect().bottomRight()))
+
 
 class MainWindow(QMainWindow):
-    send_text = Signal(str)
+    send_text = Signal(dict)
     send_files = Signal(list)
+    reaction_send = Signal(str, str)
+    typing_changed = Signal(bool)
     open_settings = Signal()
     open_about = Signal()
     request_quit = Signal()
@@ -162,10 +432,20 @@ class MainWindow(QMainWindow):
         self._store = store
         self._attachments: list[str] = []
         self._download_threads: list[DownloadWorker] = []
+        self._image_fetch_threads: list[ImageFetchWorker] = []
         self._allow_close = False
+        self._message_bubbles: dict[str, ChatBubble] = {}
+        self._file_bubbles: dict[str, ChatBubble] = {}
+        self._reply_target: dict[str, Any] | None = None
+        self._typing_state = False
+        self._typing_timer = QTimer(self)
+        self._typing_timer.setSingleShot(True)
+        self._typing_timer.timeout.connect(lambda: self._set_typing(False))
+        self._peers: list[dict[str, Any]] = []
+        self._user_items: dict[str, UserListItem] = {}
 
         self.setWindowTitle(app_info.APP_NAME)
-        self.setMinimumSize(760, 560)
+        self.setMinimumSize(860, 600)
         self.setAcceptDrops(True)
 
         central = QWidget()
@@ -225,9 +505,59 @@ class MainWindow(QMainWindow):
         glow.setOffset(0, 0)
         header.setGraphicsEffect(glow)
 
+        meta_bar = QFrame()
+        meta_bar.setObjectName("metaBar")
+        meta_layout = QHBoxLayout(meta_bar)
+        meta_layout.setContentsMargins(4, 0, 4, 0)
+        meta_layout.setSpacing(8)
+
         self.online_label = QLabel("Online im LAN: 1")
         self.online_label.setObjectName("onlineLabel")
-        self.online_label.setAlignment(Qt.AlignCenter)
+        self.online_label.setAlignment(Qt.AlignLeft)
+
+        self.search_input = QLineEdit()
+        self.search_input.setObjectName("searchInput")
+        self.search_input.setPlaceholderText("Suche im Chat...")
+        self.search_input.setClearButtonEnabled(True)
+        self.search_input.textChanged.connect(self._apply_filter)
+
+        meta_layout.addWidget(self.online_label)
+        meta_layout.addStretch(1)
+        meta_layout.addWidget(self.search_input)
+
+        content_frame = QFrame()
+        content_layout = QHBoxLayout(content_frame)
+        content_layout.setContentsMargins(0, 0, 0, 0)
+        content_layout.setSpacing(12)
+
+        self.user_panel = QFrame()
+        self.user_panel.setObjectName("userListPanel")
+        self.user_panel.setFixedWidth(220)
+        user_layout = QVBoxLayout(self.user_panel)
+        user_layout.setContentsMargins(10, 10, 10, 10)
+        user_layout.setSpacing(8)
+
+        user_title = QLabel("Online")
+        user_title.setObjectName("userListTitle")
+
+        self.user_list_area = QScrollArea()
+        self.user_list_area.setWidgetResizable(True)
+        self.user_list_area.setFrameShape(QFrame.NoFrame)
+
+        self.user_list_container = QWidget()
+        self.user_list_layout = QVBoxLayout(self.user_list_container)
+        self.user_list_layout.setContentsMargins(0, 0, 0, 0)
+        self.user_list_layout.setSpacing(6)
+        self.user_list_layout.addStretch(1)
+        self.user_list_area.setWidget(self.user_list_container)
+
+        user_layout.addWidget(user_title)
+        user_layout.addWidget(self.user_list_area, 1)
+
+        chat_panel = QFrame()
+        chat_layout = QVBoxLayout(chat_panel)
+        chat_layout.setContentsMargins(0, 0, 0, 0)
+        chat_layout.setSpacing(8)
 
         self.chat_area = QScrollArea()
         self.chat_area.setWidgetResizable(True)
@@ -248,6 +578,36 @@ class MainWindow(QMainWindow):
         self.attachments_layout.setContentsMargins(8, 6, 8, 6)
         self.attachments_panel.hide()
 
+        self.reply_bar = QFrame()
+        self.reply_bar.setObjectName("replyBar")
+        reply_layout = QHBoxLayout(self.reply_bar)
+        reply_layout.setContentsMargins(8, 6, 8, 6)
+        reply_layout.setSpacing(6)
+        self.reply_label = QLabel("")
+        self.reply_label.setObjectName("replyLabel")
+        self.reply_clear_btn = QToolButton()
+        self.reply_clear_btn.setObjectName("replyClear")
+        self.reply_clear_btn.setText("X")
+        self.reply_clear_btn.clicked.connect(self._clear_reply)
+        reply_layout.addWidget(self.reply_label)
+        reply_layout.addStretch(1)
+        reply_layout.addWidget(self.reply_clear_btn)
+        self.reply_bar.hide()
+
+        self.emoji_bar = QFrame()
+        self.emoji_bar.setObjectName("emojiBar")
+        emoji_layout = QHBoxLayout(self.emoji_bar)
+        emoji_layout.setContentsMargins(8, 4, 8, 4)
+        emoji_layout.setSpacing(6)
+        for emoji in ["😀", "😂", "😉", "😍", "👍", "🔥", "⚡", "✅"]:
+            btn = QToolButton()
+            btn.setObjectName("emojiButton")
+            btn.setText(emoji)
+            btn.setToolTip(emoji)
+            btn.clicked.connect(lambda _, e=emoji: self._insert_emoji(e))
+            emoji_layout.addWidget(btn)
+        emoji_layout.addStretch(1)
+
         composer = QFrame()
         composer.setObjectName("composerBar")
         composer_layout = QHBoxLayout(composer)
@@ -267,6 +627,7 @@ class MainWindow(QMainWindow):
         self.text_input.setFixedHeight(80)
         self.text_input.setAcceptDrops(False)
         self.text_input.send_requested.connect(self._send_clicked)
+        self.text_input.textChanged.connect(self._on_text_changed)
 
         send_btn = QPushButton("Senden")
         send_btn.setObjectName("primaryButton")
@@ -277,12 +638,19 @@ class MainWindow(QMainWindow):
         composer_layout.addWidget(self.text_input, 1)
         composer_layout.addWidget(send_btn)
 
+        chat_layout.addWidget(self.chat_area, 1)
+        chat_layout.addWidget(self.attachments_panel)
+        chat_layout.addWidget(self.reply_bar)
+        chat_layout.addWidget(self.emoji_bar)
+        chat_layout.addWidget(composer)
+
+        content_layout.addWidget(self.user_panel)
+        content_layout.addWidget(chat_panel, 1)
+
         root.addWidget(topbar)
         root.addWidget(header)
-        root.addWidget(self.online_label)
-        root.addWidget(self.chat_area, 1)
-        root.addWidget(self.attachments_panel)
-        root.addWidget(composer)
+        root.addWidget(meta_bar)
+        root.addWidget(content_frame, 1)
 
         self.setCentralWidget(central)
 
@@ -291,8 +659,61 @@ class MainWindow(QMainWindow):
         self.status.addWidget(self.status_label)
         self.setStatusBar(self.status)
 
+        self._render_user_list()
+
+    def resizeEvent(self, event):  # noqa: N802 - Qt naming
+        super().resizeEvent(event)
+        self._update_bubble_widths()
+
+    def _update_bubble_widths(self) -> None:
+        max_width = max(320, int(self.chat_area.viewport().width() * 0.72))
+        for bubble in self._message_bubbles.values():
+            bubble.setMaximumWidth(max_width)
+
     def set_online_count(self, count: int) -> None:
         self.online_label.setText(f"Online im LAN: {count}")
+
+    def set_peers(self, peers: list[dict[str, Any]]) -> None:
+        self._peers = peers
+        other_peers = [p for p in peers if p.get("sender_id") != self._store.config.sender_id]
+        self.online_label.setText(f"Online im LAN: {len(other_peers) + 1}")
+        self._render_user_list()
+
+    def _render_user_list(self) -> None:
+        while self.user_list_layout.count():
+            item = self.user_list_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+        self._user_items = {}
+
+        self_item = UserListItem(
+            self._store.config.sender_id,
+            self._store.config.user_name,
+            self._store.config.avatar_path,
+            self._store.config.avatar_sha256,
+            self._typing_state,
+            True,
+        )
+        self._user_items[self._store.config.sender_id] = self_item
+        self.user_list_layout.addWidget(self_item)
+
+        peers = sorted(
+            [p for p in self._peers if p.get("sender_id") != self._store.config.sender_id],
+            key=lambda p: (p.get("name") or "").lower(),
+        )
+        for peer in peers:
+            item = UserListItem(
+                peer.get("sender_id") or "",
+                peer.get("name") or "",
+                "",
+                peer.get("avatar_sha256") or "",
+                bool(peer.get("typing", False)),
+                False,
+            )
+            self._user_items[item.sender_id] = item
+            self.user_list_layout.addWidget(item)
+
+        self.user_list_layout.addStretch(1)
 
     def add_message(self, msg: dict, sender_ip: str, is_self: bool) -> None:
         avatar = load_avatar_pixmap(
@@ -303,8 +724,29 @@ class MainWindow(QMainWindow):
         )
         bubble = ChatBubble(msg, avatar, is_self)
         bubble.download_requested.connect(lambda m=msg: self._download_file(m, sender_ip))
-        self.chat_layout.insertWidget(self.chat_layout.count() - 1, bubble)
+        bubble.reply_requested.connect(lambda m=msg: self._set_reply(m))
+        bubble.reaction_requested.connect(lambda m, e: self._send_reaction(m, e))
+        bubble.image_clicked.connect(self._open_image_preview)
+
+        msg_id = msg.get("message_id")
+        if msg_id:
+            self._message_bubbles[msg_id] = bubble
+        file_id = msg.get("file_id")
+        if file_id:
+            self._file_bubbles[file_id] = bubble
+
+        alignment = Qt.AlignRight if is_self else Qt.AlignLeft
+        self.chat_layout.insertWidget(self.chat_layout.count() - 1, bubble, alignment=alignment)
+        if msg.get("t") == "FILE":
+            self._ensure_image_preview(msg, bubble)
+        self._update_bubble_widths()
+        self._apply_filter()
         self._scroll_to_bottom()
+
+    def apply_reaction(self, target_id: str, emoji: str, sender_id: str) -> None:
+        bubble = self._message_bubbles.get(target_id)
+        if bubble:
+            bubble.apply_reaction(emoji, sender_id)
 
     def refresh_avatar(self, sender_id: str, avatar_sha: str) -> None:
         for idx in range(self.chat_layout.count()):
@@ -313,6 +755,10 @@ class MainWindow(QMainWindow):
             if isinstance(widget, ChatBubble):
                 if widget.msg.get("sender_id") == sender_id and widget.msg.get("avatar_sha256") == avatar_sha:
                     widget.refresh_avatar("", avatar_sha)
+        item = self._user_items.get(sender_id)
+        if item:
+            name = item._name_label.text().replace(" (Du)", "")
+            item.refresh_avatar("", avatar_sha, name)
 
     def show_status(self, text: str, timeout_ms: int = 3000) -> None:
         self.status_label.setText(text)
@@ -329,6 +775,48 @@ class MainWindow(QMainWindow):
             or app_inactive
         )
 
+    def _on_text_changed(self) -> None:
+        text = self.text_input.toPlainText().strip()
+        if text:
+            if not self._typing_state:
+                self._set_typing(True)
+            self._typing_timer.start(1500)
+        else:
+            self._typing_timer.stop()
+            self._set_typing(False)
+
+    def _set_typing(self, state: bool) -> None:
+        if state == self._typing_state:
+            return
+        self._typing_state = state
+        self.typing_changed.emit(state)
+        self._render_user_list()
+
+    def _set_reply(self, msg: dict) -> None:
+        self._reply_target = msg
+        preview = msg.get("text") or msg.get("filename") or ""
+        preview = _trim_text(preview)
+        name = msg.get("name") or "?"
+        self.reply_label.setText(f"Antwort an {name}: {preview}")
+        self.reply_bar.show()
+
+    def _clear_reply(self) -> None:
+        self._reply_target = None
+        self.reply_bar.hide()
+
+    def _send_reaction(self, msg: dict, emoji: str) -> None:
+        target_id = msg.get("message_id")
+        if not target_id:
+            return
+        self.apply_reaction(target_id, emoji, self._store.config.sender_id)
+        self.reaction_send.emit(target_id, emoji)
+
+    def _insert_emoji(self, emoji: str) -> None:
+        cursor = self.text_input.textCursor()
+        cursor.insertText(emoji)
+        self.text_input.setTextCursor(cursor)
+        self.text_input.setFocus()
+
     def _send_clicked(self) -> None:
         text = self.text_input.toPlainText().strip()
         send_text = False
@@ -338,8 +826,24 @@ class MainWindow(QMainWindow):
             else:
                 send_text = True
         if send_text:
-            self.send_text.emit(text)
+            payload: dict[str, Any] = {"text": text}
+            if self._reply_target:
+                payload.update(
+                    {
+                        "reply_to": self._reply_target.get("message_id"),
+                        "reply_name": self._reply_target.get("name") or "",
+                        "reply_preview": _trim_text(
+                            self._reply_target.get("text")
+                            or self._reply_target.get("filename")
+                            or ""
+                        ),
+                        "reply_type": self._reply_target.get("t") or "",
+                    }
+                )
+            self.send_text.emit(payload)
             self.text_input.clear()
+            self._clear_reply()
+            self._set_typing(False)
 
         if self._attachments:
             self.send_files.emit(list(self._attachments))
@@ -394,6 +898,14 @@ class MainWindow(QMainWindow):
             self._attachments.remove(path)
             self._refresh_attachments()
 
+    def _apply_filter(self) -> None:
+        query = self.search_input.text()
+        for idx in range(self.chat_layout.count()):
+            item = self.chat_layout.itemAt(idx)
+            widget = item.widget()
+            if isinstance(widget, ChatBubble):
+                widget.setVisible(widget.matches_filter(query))
+
     def _scroll_to_bottom(self) -> None:
         bar = self.chat_area.verticalScrollBar()
         bar.setValue(bar.maximum())
@@ -438,19 +950,91 @@ class MainWindow(QMainWindow):
         parsed = urllib.parse.urlparse(url)
         if not parsed.netloc:
             url = f"http://{sender_ip}{parsed.path}"
-        dest_dir = downloads_dir()
-        dest_dir.mkdir(parents=True, exist_ok=True)
         filename = msg.get("filename") or "download.bin"
-        dest_path = _unique_path(dest_dir, filename)
+        file_id = msg.get("file_id") or ""
+        if file_id:
+            dest_path = attachment_cache_path(file_id, filename)
+        else:
+            dest_dir = downloads_dir()
+            dest_dir.mkdir(parents=True, exist_ok=True)
+            dest_path = _unique_path(dest_dir, filename)
+
+        if dest_path.exists():
+            bubble = self._file_bubbles.get(file_id) if file_id else None
+            if bubble:
+                bubble.set_download_status("Bereits vorhanden")
+                if _is_image_file(filename):
+                    bubble.set_image_preview(str(dest_path))
+            return
+
+        file_id = msg.get("file_id")
+        bubble = self._file_bubbles.get(file_id) if file_id else None
+        if bubble:
+            bubble.set_download_status("Lädt...")
 
         worker = DownloadWorker(url, str(dest_path), filename)
-        worker.progress.connect(lambda name, pct: self.status_label.setText(f"Lädt: {name} ({pct}%)"))
-        worker.finished.connect(lambda name, p: self.status_label.setText(f"Fertig: {name}"))
-        worker.failed.connect(lambda name, err: self.status_label.setText(f"Fehler: {name}"))
+        worker.progress.connect(
+            lambda name, pct: self._update_download_progress(bubble, name, pct)
+        )
+        worker.finished.connect(lambda name, p: self._finish_download(bubble, name, p, filename))
+        worker.failed.connect(lambda name, err: self._fail_download(bubble, name))
         worker.finished.connect(lambda *_: self._cleanup_worker())
         worker.failed.connect(lambda *_: self._cleanup_worker())
         self._download_threads.append(worker)
         worker.start()
+
+    def _ensure_image_preview(self, msg: dict, bubble: ChatBubble) -> None:
+        filename = msg.get("filename") or ""
+        file_id = msg.get("file_id") or ""
+        if not _is_image_file(filename) or not file_id:
+            return
+        cache_path = attachment_cache_path(file_id, filename)
+        if cache_path.exists():
+            bubble.set_image_preview(str(cache_path))
+            return
+        if msg.get("_from_history"):
+            return
+
+        url = msg.get("url") or ""
+        if not url:
+            return
+        parsed = urllib.parse.urlparse(url)
+        if not parsed.netloc:
+            sender_ip = msg.get("sender_ip") or ""
+            if not sender_ip:
+                return
+            url = f"http://{sender_ip}{parsed.path}"
+
+        worker = ImageFetchWorker(url, str(cache_path))
+        worker.finished.connect(lambda path: bubble.set_image_preview(path))
+        worker.finished.connect(lambda _: self._cleanup_image_workers())
+        worker.failed.connect(lambda _: self._cleanup_image_workers())
+        self._image_fetch_threads.append(worker)
+        worker.start()
+
+    def _open_image_preview(self, image_path: str) -> None:
+        dialog = ImagePreviewDialog(image_path, self)
+        dialog.exec()
+
+    def _cleanup_image_workers(self) -> None:
+        self._image_fetch_threads = [w for w in self._image_fetch_threads if w.isRunning()]
+
+    def _update_download_progress(self, bubble: ChatBubble | None, name: str, pct: int) -> None:
+        if bubble:
+            bubble.set_download_status(f"Lädt... {pct}%")
+        self.status_label.setText(f"Lädt: {name} ({pct}%)")
+
+    def _finish_download(self, bubble: ChatBubble | None, name: str, path: str, filename: str) -> None:
+        if bubble:
+            bubble.set_download_status("Gespeichert")
+            if _is_image_file(filename):
+                bubble.set_image_preview(path)
+        self.status_label.setText(f"Fertig: {name}")
+
+    def _fail_download(self, bubble: ChatBubble | None, name: str) -> None:
+        if bubble:
+            bubble.set_download_status("Fehler")
+        self.status_label.setText(f"Fehler: {name}")
 
     def _cleanup_worker(self) -> None:
         self._download_threads = [w for w in self._download_threads if w.isRunning()]
@@ -475,3 +1059,15 @@ def _format_size(size: int) -> str:
             return f"{value:.1f} {unit}" if unit != "B" else f"{int(value)} {unit}"
         value /= 1024
     return f"{int(value)} B"
+
+
+def _trim_text(text: str, max_len: int = 120) -> str:
+    cleaned = " ".join((text or "").split())
+    if len(cleaned) <= max_len:
+        return cleaned
+    return cleaned[: max_len - 1] + "…"
+
+
+def _is_image_file(filename: str) -> bool:
+    suffix = Path(filename).suffix.lower()
+    return suffix in {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp"}
