@@ -39,7 +39,7 @@ def main() -> int:
 
     app = QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)
-    apply_theme(app)
+    apply_theme(app, store.config.theme)
 
     icon = app_icon()
     app.setWindowIcon(icon)
@@ -142,6 +142,7 @@ def main() -> int:
     def show_settings(force: bool = False) -> None:
         dlg = SettingsDialog(store, force=force, parent=window)
         dlg.saved.connect(lambda: network.send_hello())
+        dlg.saved.connect(lambda: apply_theme(app, store.config.theme))
         dlg.exec()
 
     def show_about() -> None:

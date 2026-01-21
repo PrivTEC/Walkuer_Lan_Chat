@@ -19,6 +19,7 @@ class AppConfig:
     avatar_sha256: str
     sound_enabled: bool
     tray_notifications: bool
+    theme: str
     first_run_complete: bool
 
 
@@ -36,6 +37,7 @@ class ConfigStore:
             avatar_sha256="",
             sound_enabled=True,
             tray_notifications=True,
+            theme="Standard",
             first_run_complete=False,
         )
 
@@ -51,6 +53,7 @@ class ConfigStore:
                     avatar_sha256=raw.get("avatar_sha256") or "",
                     sound_enabled=bool(raw.get("sound_enabled", True)),
                     tray_notifications=bool(raw.get("tray_notifications", True)),
+                    theme=raw.get("theme") or "Standard",
                     first_run_complete=bool(raw.get("first_run_complete", False)),
                 )
             except Exception:

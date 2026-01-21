@@ -3,19 +3,56 @@ from __future__ import annotations
 from PySide6.QtWidgets import QApplication
 
 
-NEON_GREEN = "#39FF14"
-BG_BASE = "#0A0D0B"
-BG_DARKER = "#050605"
-SURFACE = "#0F1412"
-PANEL = "#101815"
-BORDER = "#1C2A22"
-TEXT = "#E6FFE0"
-TEXT_MUTED = "#8FB39A"
+def _build_theme(
+    accent: str,
+    bg_base: str,
+    bg_darker: str,
+    surface: str,
+    panel: str,
+    border: str,
+    text: str,
+    text_muted: str,
+    bg_gradient: str,
+    topbar_start: str,
+    topbar_end: str,
+    input_bg: str,
+    bubble_bg: str,
+    bubble_border: str,
+    bubble_self_bg: str,
+    bubble_self_border: str,
+    primary_text: str,
+    accent_hover: str,
+    selection_bg: str,
+    file_border: str,
+    scroll_handle: str,
+    menu_selected: str,
+) -> str:
+    NEON_GREEN = accent
+    BG_BASE = bg_base
+    BG_DARKER = bg_darker
+    SURFACE = surface
+    PANEL = panel
+    BORDER = border
+    TEXT = text
+    TEXT_MUTED = text_muted
+    BG_GRADIENT = bg_gradient
+    TOPBAR_START = topbar_start
+    TOPBAR_END = topbar_end
+    INPUT_BG = input_bg
+    BUBBLE_BG = bubble_bg
+    BUBBLE_BORDER = bubble_border
+    BUBBLE_SELF_BG = bubble_self_bg
+    BUBBLE_SELF_BORDER = bubble_self_border
+    PRIMARY_TEXT = primary_text
+    ACCENT_HOVER = accent_hover
+    SELECTION_BG = selection_bg
+    FILE_BORDER = file_border
+    SCROLL_HANDLE = scroll_handle
+    MENU_SELECTED = menu_selected
 
-
-THEME_QSS = f"""
+    return f"""
 QMainWindow {{
-    background: qradialgradient(cx:0.15, cy:0.1, radius:1.1, fx:0.1, fy:0.1, stop:0 #0F1512, stop:1 {BG_DARKER});
+    background: qradialgradient(cx:0.15, cy:0.1, radius:1.1, fx:0.1, fy:0.1, stop:0 {BG_GRADIENT}, stop:1 {BG_DARKER});
     color: {TEXT};
 }}
 QDialog {{
@@ -32,7 +69,7 @@ QWidget#appRoot {{
     background: transparent;
 }}
 QFrame#topBar {{
-    background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #0B0F0D, stop:1 #111815);
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 {TOPBAR_START}, stop:1 {TOPBAR_END});
     border-bottom: 1px solid {BORDER};
 }}
 QLabel#appTitle {{
@@ -59,21 +96,21 @@ QFrame#composerBar {{
     border-radius: 12px;
 }}
 QFrame#attachmentsPanel {{
-    background: #0B0F0E;
+    background: {INPUT_BG};
     border: 1px dashed {BORDER};
     border-radius: 10px;
 }}
 QFrame#chatBubble {{
-    background: #0E1411;
-    border: 1px solid #1B2B22;
+    background: {BUBBLE_BG};
+    border: 1px solid {BUBBLE_BORDER};
     border-radius: 12px;
     padding: 10px;
 }}
 QFrame#chatBubbleSelf {{
-    background: #0E1A12;
+    background: {BUBBLE_SELF_BG};
     border-radius: 12px;
     padding: 10px;
-    border: 1px solid #2C5C38;
+    border: 1px solid {BUBBLE_SELF_BORDER};
 }}
 QLabel#nameLabel {{
     color: {NEON_GREEN};
@@ -90,12 +127,12 @@ QLabel#chatText a {{
     color: {NEON_GREEN};
 }}
 QLabel#avatarPreview {{
-    background: #0B0F0E;
+    background: {INPUT_BG};
     border: 1px solid {BORDER};
     border-radius: 36px;
 }}
 QLabel#aboutBox {{
-    background: #0B0F0E;
+    background: {INPUT_BG};
     border: 1px solid {BORDER};
     border-radius: 8px;
     padding: 10px;
@@ -104,13 +141,13 @@ QFrame#metaBar {{
     background: transparent;
 }}
 QLineEdit#searchInput {{
-    background: #0B0F0E;
+    background: {INPUT_BG};
     border: 1px solid {BORDER};
     border-radius: 8px;
     padding: 6px 8px;
 }}
 QFrame#userListPanel {{
-    background: #0B0F0E;
+    background: {INPUT_BG};
     border: 1px solid {BORDER};
     border-radius: 12px;
 }}
@@ -125,8 +162,8 @@ QFrame#userItem {{
     border-radius: 8px;
 }}
 QFrame#userItemSelf {{
-    background: #0E1A12;
-    border: 1px solid #2C5C38;
+    background: {BUBBLE_SELF_BG};
+    border: 1px solid {BUBBLE_SELF_BORDER};
     border-radius: 8px;
 }}
 QLabel#userName {{
@@ -142,7 +179,7 @@ QLabel#userStatusTyping {{
     font-size: 8pt;
 }}
 QFrame#replyBar {{
-    background: #0B0F0E;
+    background: {INPUT_BG};
     border: 1px solid {BORDER};
     border-radius: 8px;
 }}
@@ -156,7 +193,7 @@ QToolButton#replyClear {{
     padding: 2px 6px;
 }}
 QFrame#replyBox {{
-    background: #0B0F0E;
+    background: {INPUT_BG};
     border: 1px solid {BORDER};
     border-radius: 8px;
 }}
@@ -172,7 +209,7 @@ QFrame#reactionBar {{
     background: transparent;
 }}
 QFrame#reactionChip {{
-    background: #0B0F0E;
+    background: {INPUT_BG};
     border: 1px solid {BORDER};
     border-radius: 10px;
 }}
@@ -181,7 +218,7 @@ QLabel#reactionText {{
     font-size: 8pt;
 }}
 QToolButton#replyButton, QToolButton#reactionButton {{
-    background: #0B0F0E;
+    background: {INPUT_BG};
     border: 1px solid {BORDER};
     border-radius: 6px;
     padding: 2px 6px;
@@ -192,17 +229,17 @@ QToolButton#replyButton:hover, QToolButton#reactionButton:hover {{
     border-color: {NEON_GREEN};
 }}
 QLabel#imagePreview {{
-    background: #0B0F0E;
+    background: {INPUT_BG};
     border: 1px solid {BORDER};
     border-radius: 8px;
 }}
 QFrame#emojiBar {{
-    background: #0B0F0E;
+    background: {INPUT_BG};
     border: 1px solid {BORDER};
     border-radius: 10px;
 }}
 QToolButton#emojiButton {{
-    background: #0B0F0E;
+    background: {INPUT_BG};
     border: 1px solid {BORDER};
     border-radius: 8px;
     padding: 2px 6px;
@@ -216,22 +253,38 @@ QLabel#fileStatus {{
     font-size: 8pt;
 }}
 QFrame#fileCard {{
-    background: #0B0F0E;
-    border: 1px solid #1E3326;
+    background: {INPUT_BG};
+    border: 1px solid {FILE_BORDER};
     border-radius: 8px;
 }}
 QLabel#fileLabel {{
     color: {TEXT};
 }}
 QLineEdit, QTextEdit {{
-    background: #0B0F0E;
+    background: {INPUT_BG};
     border: 1px solid {BORDER};
     border-radius: 8px;
     padding: 8px;
-    selection-background-color: #1E3D2A;
+    selection-background-color: {SELECTION_BG};
+}}
+QComboBox {{
+    background: {INPUT_BG};
+    border: 1px solid {BORDER};
+    border-radius: 8px;
+    padding: 6px 8px;
+}}
+QComboBox::drop-down {{
+    border: none;
+    width: 24px;
+}}
+QComboBox QAbstractItemView {{
+    background: {INPUT_BG};
+    color: {TEXT};
+    selection-background-color: {MENU_SELECTED};
+    border: 1px solid {BORDER};
 }}
 QPushButton {{
-    background: #0B0F0E;
+    background: {INPUT_BG};
     border: 1px solid {BORDER};
     border-radius: 8px;
     padding: 8px 12px;
@@ -241,22 +294,22 @@ QPushButton:hover {{
 }}
 QPushButton#primaryButton {{
     background: {NEON_GREEN};
-    color: #041007;
+    color: {PRIMARY_TEXT};
     border: 1px solid {NEON_GREEN};
     font-weight: 600;
 }}
 QPushButton#primaryButton:hover {{
-    background: #6BFF47;
+    background: {ACCENT_HOVER};
 }}
 QPushButton#iconButton {{
-    background: #0B0F0E;
+    background: {INPUT_BG};
     border: 1px solid {BORDER};
 }}
 QPushButton#downloadButton {{
     border: 1px solid {NEON_GREEN};
 }}
 QToolButton {{
-    background: #0B0F0E;
+    background: {INPUT_BG};
     border: 1px solid {BORDER};
     border-radius: 6px;
     padding: 4px;
@@ -273,14 +326,14 @@ QScrollArea::viewport {{
 }}
 QScrollBar:vertical {{
     width: 10px;
-    background: #0B0F0E;
+    background: {INPUT_BG};
 }}
 QScrollBar::handle:vertical {{
-    background: #1D4021;
+    background: {SCROLL_HANDLE};
     border-radius: 4px;
 }}
 QStatusBar {{
-    background: #0B0F0E;
+    background: {INPUT_BG};
     color: {TEXT_MUTED};
 }}
 QCheckBox {{
@@ -291,22 +344,78 @@ QCheckBox::indicator {{
     height: 16px;
     border-radius: 4px;
     border: 1px solid {BORDER};
-    background: #0B0F0E;
+    background: {INPUT_BG};
 }}
 QCheckBox::indicator:checked {{
     background: {NEON_GREEN};
     border: 1px solid {NEON_GREEN};
 }}
 QMenu {{
-    background: #0B0F0E;
+    background: {INPUT_BG};
     color: {TEXT};
     border: 1px solid {BORDER};
 }}
 QMenu::item:selected {{
-    background: #143018;
+    background: {MENU_SELECTED};
 }}
 """
 
 
-def apply_theme(app: QApplication) -> None:
-    app.setStyleSheet(THEME_QSS)
+DEFAULT_THEME = "Standard"
+PINK_PUPA_THEME = "Pink Pupa (Alina Version)"
+
+THEMES = {
+    DEFAULT_THEME: _build_theme(
+        accent="#39FF14",
+        bg_base="#0A0D0B",
+        bg_darker="#050605",
+        surface="#0F1412",
+        panel="#101815",
+        border="#1C2A22",
+        text="#E6FFE0",
+        text_muted="#8FB39A",
+        bg_gradient="#0F1512",
+        topbar_start="#0B0F0D",
+        topbar_end="#111815",
+        input_bg="#0B0F0E",
+        bubble_bg="#0E1411",
+        bubble_border="#1B2B22",
+        bubble_self_bg="#0E1A12",
+        bubble_self_border="#2C5C38",
+        primary_text="#041007",
+        accent_hover="#6BFF47",
+        selection_bg="#1E3D2A",
+        file_border="#1E3326",
+        scroll_handle="#1D4021",
+        menu_selected="#143018",
+    ),
+    PINK_PUPA_THEME: _build_theme(
+        accent="#FF6FB8",
+        bg_base="#0E0A0F",
+        bg_darker="#060507",
+        surface="#141015",
+        panel="#18111B",
+        border="#2A2130",
+        text="#FFE8F4",
+        text_muted="#C2A9BC",
+        bg_gradient="#141019",
+        topbar_start="#140F16",
+        topbar_end="#1A141C",
+        input_bg="#130E16",
+        bubble_bg="#16101B",
+        bubble_border="#2A2332",
+        bubble_self_bg="#1C1224",
+        bubble_self_border="#5C2E64",
+        primary_text="#12070F",
+        accent_hover="#FF9AD9",
+        selection_bg="#3A2640",
+        file_border="#352238",
+        scroll_handle="#3A2A42",
+        menu_selected="#2A1B2F",
+    ),
+}
+
+
+def apply_theme(app: QApplication, theme_name: str | None = None) -> None:
+    key = theme_name or DEFAULT_THEME
+    app.setStyleSheet(THEMES.get(key, THEMES[DEFAULT_THEME]))

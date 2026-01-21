@@ -10,10 +10,15 @@ def play_notification(enabled: bool) -> None:
     if not enabled or winsound is None:
         return
     try:
-        winsound.Beep(520, 60)
-        winsound.Beep(660, 80)
+        winsound.PlaySound("SystemNotification", winsound.SND_ALIAS | winsound.SND_ASYNC)
+        return
+    except Exception:
+        pass
+    try:
+        winsound.Beep(640, 50)
+        winsound.Beep(520, 70)
     except Exception:
         try:
-            winsound.MessageBeep(winsound.MB_ICONASTERISK)
+            winsound.MessageBeep(winsound.MB_OK)
         except Exception:
             pass

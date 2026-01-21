@@ -6,7 +6,7 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import Qt, QThread, QTimer, Signal, QSize
+from PySide6.QtCore import Qt, QThread, QTimer, Signal, QSize, QEvent, QPoint
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QApplication,
@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QScrollArea,
     QSizePolicy,
+    QSpacerItem,
     QStatusBar,
     QTextEdit,
     QToolButton,
@@ -224,7 +225,7 @@ class ChatBubble(QFrame):
         self._preview_path: str | None = None
 
         self.setObjectName("chatBubbleSelf" if is_self else "chatBubble")
-        self.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Minimum)
+        self.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Minimum)
 
         layout = QHBoxLayout(self)
         layout.setSpacing(10)
@@ -269,6 +270,7 @@ class ChatBubble(QFrame):
         if reply_to:
             reply_box = QFrame()
             reply_box.setObjectName("replyBox")
+            reply_box.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
             reply_layout = QVBoxLayout(reply_box)
             reply_layout.setContentsMargins(8, 6, 8, 6)
             reply_layout.setSpacing(2)
@@ -289,11 +291,13 @@ class ChatBubble(QFrame):
             text_widget.setTextInteractionFlags(Qt.TextSelectableByMouse | Qt.LinksAccessibleByMouse)
             text_widget.setWordWrap(True)
             text_widget.setStyleSheet("margin: 0px;")
+            text_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
             text_widget.setText(render_markdown(msg.get("text") or ""))
             body.addWidget(text_widget)
         else:
             file_box = QFrame()
             file_box.setObjectName("fileCard")
+            file_box.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
             file_layout = QVBoxLayout(file_box)
             file_layout.setContentsMargins(10, 8, 10, 8)
             file_layout.setSpacing(6)
@@ -333,8 +337,7 @@ class ChatBubble(QFrame):
         body.addWidget(self._reaction_bar)
 
         layout.addWidget(self._avatar_label)
-        layout.addLayout(body)
-        layout.addStretch(1)
+        layout.addLayout(body, 1)
 
     def refresh_avatar(self, avatar_path: str, avatar_sha: str) -> None:
         pixmap = load_avatar_pixmap(
@@ -443,8 +446,12 @@ class MainWindow(QMainWindow):
         self._typing_timer.timeout.connect(lambda: self._set_typing(False))
         self._peers: list[dict[str, Any]] = []
         self._user_items: dict[str, UserListItem] = {}
+        self._stick_to_bottom = True
+        self._drag_active = False
+        self._drag_offset = QPoint()
 
         self.setWindowTitle(app_info.APP_NAME)
+        self.setWindowFlags(self.windowFlags() | Qt.FramelessWindowHint)
         self.setMinimumSize(860, 600)
         self.setAcceptDrops(True)
 
@@ -474,8 +481,7 @@ class MainWindow(QMainWindow):
         style = self.style()
 
         settings_btn = QToolButton()
-        settings_btn.setIcon(style.standardIcon(QStyle.SP_FileDialogDetailedView))
-        settings_btn.setIconSize(QSize(14, 14))
+        settings_btn.setText("⚙")
         settings_btn.setToolTip("Einstellungen")
         settings_btn.clicked.connect(self.open_settings)
         minimize_btn = QToolButton()
@@ -495,6 +501,10 @@ class MainWindow(QMainWindow):
         top_layout.addWidget(settings_btn)
         top_layout.addWidget(minimize_btn)
         top_layout.addWidget(close_btn)
+
+        self._drag_widgets = {topbar, title_label, icon_label}
+        for widget in self._drag_widgets:
+            widget.installEventFilter(self)
 
         header = QLabel("Walkür Technology")
         header.setObjectName("headerTitle")
@@ -569,8 +579,11 @@ class MainWindow(QMainWindow):
         self.chat_layout = QVBoxLayout(self.chat_container)
         self.chat_layout.setSpacing(10)
         self.chat_layout.setContentsMargins(12, 12, 12, 12)
-        self.chat_layout.addStretch(1)
+        self.chat_layout.addItem(QSpacerItem(0, 0, QSizePolicy.Minimum, QSizePolicy.Expanding))
         self.chat_area.setWidget(self.chat_container)
+        scroll_bar = self.chat_area.verticalScrollBar()
+        scroll_bar.valueChanged.connect(self._on_scroll_changed)
+        scroll_bar.rangeChanged.connect(self._on_scroll_range_changed)
 
         self.attachments_panel = QFrame()
         self.attachments_panel.setObjectName("attachmentsPanel")
@@ -616,8 +629,7 @@ class MainWindow(QMainWindow):
 
         attach_btn = QPushButton()
         attach_btn.setObjectName("iconButton")
-        attach_btn.setIcon(style.standardIcon(QStyle.SP_FileIcon))
-        attach_btn.setIconSize(QSize(16, 16))
+        attach_btn.setText("📎")
         attach_btn.setToolTip("Datei anhängen")
         attach_btn.setFixedSize(40, 40)
         attach_btn.clicked.connect(self._choose_files)
@@ -666,9 +678,13 @@ class MainWindow(QMainWindow):
         self._update_bubble_widths()
 
     def _update_bubble_widths(self) -> None:
-        max_width = max(320, int(self.chat_area.viewport().width() * 0.72))
+        max_width = max(340, int(self.chat_area.viewport().width() * 0.78))
+        min_width = max(220, int(self.chat_area.viewport().width() * 0.34))
+        if min_width > max_width:
+            min_width = max_width
         for bubble in self._message_bubbles.values():
             bubble.setMaximumWidth(max_width)
+            bubble.setMinimumWidth(min_width)
 
     def set_online_count(self, count: int) -> None:
         self.online_label.setText(f"Online im LAN: {count}")
@@ -736,12 +752,12 @@ class MainWindow(QMainWindow):
             self._file_bubbles[file_id] = bubble
 
         alignment = Qt.AlignRight if is_self else Qt.AlignLeft
-        self.chat_layout.insertWidget(self.chat_layout.count() - 1, bubble, alignment=alignment)
+        self.chat_layout.addWidget(bubble, alignment=alignment)
         if msg.get("t") == "FILE":
             self._ensure_image_preview(msg, bubble)
         self._update_bubble_widths()
         self._apply_filter()
-        self._scroll_to_bottom()
+        self._scroll_to_bottom(force=is_self)
 
     def apply_reaction(self, target_id: str, emoji: str, sender_id: str) -> None:
         bubble = self._message_bubbles.get(target_id)
@@ -906,9 +922,19 @@ class MainWindow(QMainWindow):
             if isinstance(widget, ChatBubble):
                 widget.setVisible(widget.matches_filter(query))
 
-    def _scroll_to_bottom(self) -> None:
+    def _scroll_to_bottom(self, force: bool = False) -> None:
+        if not force and not self._stick_to_bottom:
+            return
         bar = self.chat_area.verticalScrollBar()
-        bar.setValue(bar.maximum())
+        QTimer.singleShot(0, lambda: bar.setValue(bar.maximum()))
+
+    def _on_scroll_changed(self, value: int) -> None:
+        bar = self.chat_area.verticalScrollBar()
+        self._stick_to_bottom = value >= (bar.maximum() - 24)
+
+    def _on_scroll_range_changed(self, _min: int, _max: int) -> None:
+        if self._stick_to_bottom:
+            self._scroll_to_bottom(force=True)
 
     def _hide_to_tray(self) -> None:
         self.hide()
@@ -930,6 +956,22 @@ class MainWindow(QMainWindow):
         else:
             self.hide()
             event.ignore()
+
+    def eventFilter(self, obj, event):  # noqa: N802 - Qt naming
+        if obj in getattr(self, "_drag_widgets", set()):
+            if event.type() == QEvent.MouseButtonPress and event.button() == Qt.LeftButton:
+                self._drag_active = True
+                self._drag_offset = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
+                return True
+            if event.type() == QEvent.MouseMove and self._drag_active:
+                if self.windowState() & Qt.WindowMaximized:
+                    return True
+                self.move(event.globalPosition().toPoint() - self._drag_offset)
+                return True
+            if event.type() == QEvent.MouseButtonRelease and self._drag_active:
+                self._drag_active = False
+                return True
+        return super().eventFilter(obj, event)
 
     def dragEnterEvent(self, event):  # noqa: N802 - Qt naming
         if event.mimeData().hasUrls():

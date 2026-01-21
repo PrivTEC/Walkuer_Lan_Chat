@@ -3,6 +3,7 @@ from __future__ import annotations
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
+    QComboBox,
     QDialog,
     QFileDialog,
     QHBoxLayout,
@@ -13,6 +14,7 @@ from PySide6.QtWidgets import (
 )
 
 from config_store import ConfigStore
+from theme import DEFAULT_THEME, THEMES
 from util.images import load_avatar_pixmap
 
 
@@ -54,6 +56,15 @@ class SettingsDialog(QDialog):
         avatar_buttons.addWidget(choose_btn)
         avatar_buttons.addWidget(remove_btn)
 
+        theme_label = QLabel("Theme")
+        self.theme_select = QComboBox()
+        self.theme_select.addItems(list(THEMES.keys()))
+        current_theme = store.config.theme or DEFAULT_THEME
+        index = self.theme_select.findText(current_theme)
+        if index < 0:
+            index = 0
+        self.theme_select.setCurrentIndex(index)
+
         self.sound_toggle = QCheckBox("Sound bei neuen Nachrichten")
         self.sound_toggle.setChecked(store.config.sound_enabled)
 
@@ -69,6 +80,8 @@ class SettingsDialog(QDialog):
         layout.addWidget(avatar_label)
         layout.addWidget(self.avatar_preview, alignment=Qt.AlignLeft)
         layout.addLayout(avatar_buttons)
+        layout.addWidget(theme_label)
+        layout.addWidget(self.theme_select)
         layout.addWidget(self.sound_toggle)
         layout.addWidget(self.tray_toggle)
         layout.addStretch(1)
@@ -108,6 +121,7 @@ class SettingsDialog(QDialog):
     def _save(self) -> None:
         name = self.name_input.text().strip() or "User"
         self._store.config.user_name = name
+        self._store.config.theme = self.theme_select.currentText()
         self._store.config.sound_enabled = self.sound_toggle.isChecked()
         self._store.config.tray_notifications = self.tray_toggle.isChecked()
         self._store.config.first_run_complete = True
