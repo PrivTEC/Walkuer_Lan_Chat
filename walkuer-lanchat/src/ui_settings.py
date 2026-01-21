@@ -14,7 +14,7 @@ from PySide6.QtWidgets import (
 )
 
 from config_store import ConfigStore
-from theme import DEFAULT_THEME, THEMES
+from theme import DEFAULT_THEME, THEME_CHOICES
 from util.images import load_avatar_pixmap
 
 
@@ -58,7 +58,7 @@ class SettingsDialog(QDialog):
 
         theme_label = QLabel("Theme")
         self.theme_select = QComboBox()
-        self.theme_select.addItems(list(THEMES.keys()))
+        self.theme_select.addItems(THEME_CHOICES)
         current_theme = store.config.theme or DEFAULT_THEME
         index = self.theme_select.findText(current_theme)
         if index < 0:

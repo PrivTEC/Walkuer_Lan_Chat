@@ -123,6 +123,9 @@ QLabel#timeLabel {{
 QLabel#chatText {{
     color: {TEXT};
 }}
+QLabel#chatTextMuted {{
+    color: {TEXT_MUTED};
+}}
 QLabel#chatText a {{
     color: {NEON_GREEN};
 }}
@@ -183,10 +186,39 @@ QFrame#replyBar {{
     border: 1px solid {BORDER};
     border-radius: 8px;
 }}
+QFrame#editBar {{
+    background: {INPUT_BG};
+    border: 1px solid {BORDER};
+    border-radius: 8px;
+}}
 QLabel#replyLabel {{
     color: {TEXT_MUTED};
 }}
+QLabel#editLabel {{
+    color: {TEXT_MUTED};
+}}
 QToolButton#replyClear {{
+    background: transparent;
+    border: 1px solid {BORDER};
+    border-radius: 6px;
+    padding: 2px 6px;
+}}
+QToolButton#editClear {{
+    background: transparent;
+    border: 1px solid {BORDER};
+    border-radius: 6px;
+    padding: 2px 6px;
+}}
+QFrame#pinnedBar {{
+    background: {INPUT_BG};
+    border: 1px solid {BORDER};
+    border-radius: 10px;
+}}
+QLabel#pinnedLabel {{
+    color: {TEXT};
+    font-weight: 600;
+}}
+QToolButton#pinnedClear {{
     background: transparent;
     border: 1px solid {BORDER};
     border-radius: 6px;
@@ -256,6 +288,19 @@ QFrame#fileCard {{
     background: {INPUT_BG};
     border: 1px solid {FILE_BORDER};
     border-radius: 8px;
+}}
+QProgressBar#fileProgress {{
+    background: {INPUT_BG};
+    border: 1px solid {BORDER};
+    border-radius: 6px;
+    height: 6px;
+}}
+QProgressBar#fileProgress::chunk {{
+    background: {NEON_GREEN};
+    border-radius: 6px;
+}}
+QPushButton#retryButton {{
+    border: 1px solid {NEON_GREEN};
 }}
 QLabel#fileLabel {{
     color: {TEXT};
@@ -363,6 +408,8 @@ QMenu::item:selected {{
 
 DEFAULT_THEME = "Standard"
 PINK_PUPA_THEME = "Pink Pupa (Alina Version)"
+MIDNIGHT_BLUE_THEME = "Midnight Blue"
+MONO_MINIMAL_THEME = "Mono Minimal"
 
 THEMES = {
     DEFAULT_THEME: _build_theme(
@@ -413,7 +460,63 @@ THEMES = {
         scroll_handle="#3A2A42",
         menu_selected="#2A1B2F",
     ),
+    MIDNIGHT_BLUE_THEME: _build_theme(
+        accent="#49C8FF",
+        bg_base="#0A0C12",
+        bg_darker="#05070B",
+        surface="#111622",
+        panel="#141A28",
+        border="#233045",
+        text="#E7F3FF",
+        text_muted="#9BB0C7",
+        bg_gradient="#121826",
+        topbar_start="#0D121C",
+        topbar_end="#151C2A",
+        input_bg="#0F141F",
+        bubble_bg="#101722",
+        bubble_border="#1F2A3D",
+        bubble_self_bg="#132032",
+        bubble_self_border="#3B6EA5",
+        primary_text="#06111E",
+        accent_hover="#7AD8FF",
+        selection_bg="#1F3552",
+        file_border="#243248",
+        scroll_handle="#284A6E",
+        menu_selected="#1B2A3F",
+    ),
+    MONO_MINIMAL_THEME: _build_theme(
+        accent="#CFCFCF",
+        bg_base="#0C0C0C",
+        bg_darker="#070707",
+        surface="#111111",
+        panel="#151515",
+        border="#262626",
+        text="#F2F2F2",
+        text_muted="#A0A0A0",
+        bg_gradient="#121212",
+        topbar_start="#0E0E0E",
+        topbar_end="#141414",
+        input_bg="#101010",
+        bubble_bg="#121212",
+        bubble_border="#2A2A2A",
+        bubble_self_bg="#161616",
+        bubble_self_border="#3A3A3A",
+        primary_text="#0B0B0B",
+        accent_hover="#FFFFFF",
+        selection_bg="#2B2B2B",
+        file_border="#2C2C2C",
+        scroll_handle="#3A3A3A",
+        menu_selected="#1E1E1E",
+    ),
 }
+THEMES.setdefault("Pink Pupa", THEMES[PINK_PUPA_THEME])
+
+THEME_CHOICES = [
+    DEFAULT_THEME,
+    PINK_PUPA_THEME,
+    MIDNIGHT_BLUE_THEME,
+    MONO_MINIMAL_THEME,
+]
 
 
 def apply_theme(app: QApplication, theme_name: str | None = None) -> None:

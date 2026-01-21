@@ -62,7 +62,32 @@ def main() -> int:
     for msg in loaded_messages:
         history_msg = dict(msg)
         history_msg["_from_history"] = True
-        window.add_message(history_msg, history_msg.get("sender_ip", ""), history_msg.get("sender_id") == store.config.sender_id)
+        if history_msg.get("t") == "CHAT" and history_msg.get("subtype"):
+            subtype = history_msg.get("subtype")
+            if subtype == "REACT":
+                window.apply_reaction(
+                    history_msg.get("target_id", ""),
+                    history_msg.get("emoji", ""),
+                    history_msg.get("sender_id", ""),
+                )
+            elif subtype == "EDIT":
+                window.apply_edit(history_msg.get("target_id", ""), history_msg.get("text", ""))
+            elif subtype == "UNDO":
+                window.apply_undo(history_msg.get("target_id", ""))
+            elif subtype == "PIN":
+                window.apply_pin(
+                    history_msg.get("target_id", ""),
+                    history_msg.get("preview", ""),
+                    history_msg.get("name", ""),
+                )
+            elif subtype == "UNPIN":
+                window.apply_unpin(history_msg.get("target_id", ""))
+            continue
+        window.add_message(
+            history_msg,
+            history_msg.get("sender_ip", ""),
+            history_msg.get("sender_id") == store.config.sender_id,
+        )
 
     from util.paths import attachment_cache_path
 
@@ -95,9 +120,27 @@ def main() -> int:
     def handle_incoming(msg: dict, sender_ip: str) -> None:
         msg = dict(msg)
         msg["sender_ip"] = sender_ip
-        if msg.get("t") == "CHAT" and msg.get("subtype") == "REACT":
-            window.apply_reaction(msg.get("target_id", ""), msg.get("emoji", ""), msg.get("sender_id", ""))
-            return
+        if msg.get("t") == "CHAT" and msg.get("subtype"):
+            subtype = msg.get("subtype")
+            if subtype == "REACT":
+                window.apply_reaction(msg.get("target_id", ""), msg.get("emoji", ""), msg.get("sender_id", ""))
+                return
+            if subtype == "EDIT":
+                window.apply_edit(msg.get("target_id", ""), msg.get("text", ""))
+                history.append(msg)
+                return
+            if subtype == "UNDO":
+                window.apply_undo(msg.get("target_id", ""))
+                history.append(msg)
+                return
+            if subtype == "PIN":
+                window.apply_pin(msg.get("target_id", ""), msg.get("preview", ""), msg.get("name", ""))
+                history.append(msg)
+                return
+            if subtype == "UNPIN":
+                window.apply_unpin(msg.get("target_id", ""))
+                history.append(msg)
+                return
         window.add_message(msg, sender_ip, False)
         history.append(msg)
         notify_if_needed(msg)
@@ -110,6 +153,30 @@ def main() -> int:
         else:
             msg = network.send_chat(text)
         window.add_message(msg, "", True)
+        history.append(dict(msg))
+
+    def handle_edit_message(target_id: str, text: str) -> None:
+        if not target_id:
+            return
+        msg = network.send_edit(target_id, text)
+        history.append(dict(msg))
+
+    def handle_undo_message(target_id: str) -> None:
+        if not target_id:
+            return
+        msg = network.send_undo(target_id)
+        history.append(dict(msg))
+
+    def handle_pin_message(target_id: str, preview: str) -> None:
+        if not target_id:
+            return
+        msg = network.send_pin(target_id, preview)
+        history.append(dict(msg))
+
+    def handle_unpin_message(target_id: str) -> None:
+        if not target_id:
+            return
+        msg = network.send_unpin(target_id)
         history.append(dict(msg))
 
     def handle_send_files(paths: list[str]) -> None:
@@ -159,6 +226,10 @@ def main() -> int:
     window.send_text.connect(handle_send_text)
     window.send_files.connect(handle_send_files)
     window.reaction_send.connect(lambda target_id, emoji: network.send_reaction(target_id, emoji))
+    window.edit_message.connect(handle_edit_message)
+    window.undo_message.connect(handle_undo_message)
+    window.pin_message.connect(handle_pin_message)
+    window.unpin_message.connect(handle_unpin_message)
     window.typing_changed.connect(network.set_typing)
     window.open_settings.connect(lambda: show_settings(False))
     window.open_about.connect(show_about)

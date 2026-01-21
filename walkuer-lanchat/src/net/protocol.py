@@ -88,6 +88,70 @@ def build_reaction(sender_id: str, name: str, avatar_sha256: str, target_id: str
     }
 
 
+def build_edit(
+    sender_id: str,
+    name: str,
+    avatar_sha256: str,
+    target_id: str,
+    text: str,
+) -> dict[str, Any]:
+    return {
+        "t": "CHAT",
+        "v": VERSION,
+        "message_id": _uuid(),
+        "sender_id": sender_id,
+        "name": name,
+        "avatar_sha256": avatar_sha256 or "",
+        "subtype": "EDIT",
+        "target_id": target_id,
+        "text": text,
+        "ts": now_ms(),
+    }
+
+
+def build_undo(sender_id: str, name: str, avatar_sha256: str, target_id: str) -> dict[str, Any]:
+    return {
+        "t": "CHAT",
+        "v": VERSION,
+        "message_id": _uuid(),
+        "sender_id": sender_id,
+        "name": name,
+        "avatar_sha256": avatar_sha256 or "",
+        "subtype": "UNDO",
+        "target_id": target_id,
+        "ts": now_ms(),
+    }
+
+
+def build_pin(sender_id: str, name: str, avatar_sha256: str, target_id: str, preview: str) -> dict[str, Any]:
+    return {
+        "t": "CHAT",
+        "v": VERSION,
+        "message_id": _uuid(),
+        "sender_id": sender_id,
+        "name": name,
+        "avatar_sha256": avatar_sha256 or "",
+        "subtype": "PIN",
+        "target_id": target_id,
+        "preview": preview,
+        "ts": now_ms(),
+    }
+
+
+def build_unpin(sender_id: str, name: str, avatar_sha256: str, target_id: str) -> dict[str, Any]:
+    return {
+        "t": "CHAT",
+        "v": VERSION,
+        "message_id": _uuid(),
+        "sender_id": sender_id,
+        "name": name,
+        "avatar_sha256": avatar_sha256 or "",
+        "subtype": "UNPIN",
+        "target_id": target_id,
+        "ts": now_ms(),
+    }
+
+
 def build_file(
     sender_id: str,
     name: str,

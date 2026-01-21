@@ -63,15 +63,16 @@ class MulticastClient(QObject):
         self._listener.start()
         self._lock = threading.Lock()
 
-    def send(self, payload: dict[str, Any]) -> None:
+    def send(self, payload: dict[str, Any]) -> bool:
         data = protocol.encode_message(payload)
         if not data:
-            return
+            return False
         with self._lock:
             try:
                 self._send_sock.sendto(data, (protocol.MULTICAST_GROUP, protocol.UDP_PORT))
+                return True
             except Exception:
-                pass
+                return False
 
     def close(self) -> None:
         try:
@@ -136,6 +137,10 @@ class LanChatNetwork(QObject):
         self._last_typing_sent = 0.0
         self._avatar_fetching: set[str] = set()
         self._avatar_workers: list[AvatarDownloadWorker] = []
+        self._offline_queue: list[dict[str, Any]] = []
+        self._queue_limit = 200
+        self._network_ready = True
+        self._last_ip = _get_local_ip()
 
         self._hello_timer = QTimer(self)
         self._hello_timer.timeout.connect(self.send_hello)
@@ -159,6 +164,7 @@ class LanChatNetwork(QObject):
         QTimer.singleShot(300, self.send_hello)
 
     def send_hello(self) -> None:
+        self._refresh_network_state()
         if self._store.config.avatar_path and self._store.config.avatar_sha256:
             port = self._file_server.ensure_running()
             if port:
@@ -175,6 +181,7 @@ class LanChatNetwork(QObject):
             self._typing,
         )
         self._client.send(msg)
+        self._flush_queue()
 
     def send_chat(self, text: str) -> dict[str, Any]:
         msg = protocol.build_chat(
@@ -183,7 +190,7 @@ class LanChatNetwork(QObject):
             self._store.config.avatar_sha256,
             text,
         )
-        self._send_with_retries(msg)
+        self._send_or_queue(msg)
         return msg
 
     def send_chat_with_meta(self, text: str, meta: dict[str, Any]) -> dict[str, Any]:
@@ -194,7 +201,7 @@ class LanChatNetwork(QObject):
             text,
         )
         msg.update(meta)
-        self._send_with_retries(msg)
+        self._send_or_queue(msg)
         return msg
 
     def send_reaction(self, target_id: str, emoji: str) -> dict[str, Any]:
@@ -205,7 +212,49 @@ class LanChatNetwork(QObject):
             target_id,
             emoji,
         )
-        self._send_with_retries(msg)
+        self._send_or_queue(msg)
+        return msg
+
+    def send_edit(self, target_id: str, text: str) -> dict[str, Any]:
+        msg = protocol.build_edit(
+            self._store.config.sender_id,
+            self._store.config.user_name,
+            self._store.config.avatar_sha256,
+            target_id,
+            text,
+        )
+        self._send_or_queue(msg)
+        return msg
+
+    def send_undo(self, target_id: str) -> dict[str, Any]:
+        msg = protocol.build_undo(
+            self._store.config.sender_id,
+            self._store.config.user_name,
+            self._store.config.avatar_sha256,
+            target_id,
+        )
+        self._send_or_queue(msg)
+        return msg
+
+    def send_pin(self, target_id: str, preview: str) -> dict[str, Any]:
+        msg = protocol.build_pin(
+            self._store.config.sender_id,
+            self._store.config.user_name,
+            self._store.config.avatar_sha256,
+            target_id,
+            preview,
+        )
+        self._send_or_queue(msg)
+        return msg
+
+    def send_unpin(self, target_id: str) -> dict[str, Any]:
+        msg = protocol.build_unpin(
+            self._store.config.sender_id,
+            self._store.config.user_name,
+            self._store.config.avatar_sha256,
+            target_id,
+        )
+        self._send_or_queue(msg)
         return msg
 
     def send_file(self, file_id: str, file_path: str, filename: str, size: int, sha256: str) -> dict[str, Any]:
@@ -216,8 +265,8 @@ class LanChatNetwork(QObject):
             self._http_port = port
             self.send_hello()
         self._file_server.register_file(file_id, file_path)
-        ip = _get_local_ip()
-        url = f"http://{ip}:{self._http_port}/f/{file_id}"
+        self._refresh_network_state()
+        url = f"http://{self._last_ip}:{self._http_port}/f/{file_id}"
         msg = protocol.build_file(
             self._store.config.sender_id,
             self._store.config.user_name,
@@ -228,7 +277,7 @@ class LanChatNetwork(QObject):
             sha256,
             url,
         )
-        self._send_with_retries(msg)
+        self._send_or_queue(msg)
         return msg
 
     def register_cached_file(self, file_id: str, file_path: str) -> None:
@@ -241,10 +290,56 @@ class LanChatNetwork(QObject):
         self._file_server.register_file(file_id, file_path)
 
     def _send_with_retries(self, msg: dict[str, Any]) -> None:
-        self._client.send(msg)
+        if not self._client.send(msg):
+            return
         for delay in (60, 120):
             jitter = random.randint(0, 40)
             QTimer.singleShot(delay + jitter, lambda m=msg: self._client.send(m))
+
+    def _send_or_queue(self, msg: dict[str, Any]) -> None:
+        self._refresh_network_state()
+        if not self._network_ready:
+            self._queue_message(msg)
+            return
+        if not self._client.send(msg):
+            self._queue_message(msg)
+            return
+        for delay in (60, 120):
+            jitter = random.randint(0, 40)
+            QTimer.singleShot(delay + jitter, lambda m=msg: self._client.send(m))
+
+    def _queue_message(self, msg: dict[str, Any]) -> None:
+        if len(self._offline_queue) >= self._queue_limit:
+            self._offline_queue = self._offline_queue[-self._queue_limit + 1 :]
+        self._offline_queue.append(dict(msg))
+
+    def _flush_queue(self) -> None:
+        if not self._network_ready or not self._offline_queue:
+            return
+        remaining: list[dict[str, Any]] = []
+        for msg in self._offline_queue:
+            if msg.get("t") == "FILE":
+                port = self._file_server.ensure_running()
+                if not port:
+                    remaining.append(msg)
+                    continue
+                if port != self._http_port:
+                    self._http_port = port
+                file_id = msg.get("file_id") or ""
+                if file_id:
+                    msg["url"] = f"http://{self._last_ip}:{self._http_port}/f/{file_id}"
+            if self._client.send(msg):
+                for delay in (60, 120):
+                    jitter = random.randint(0, 40)
+                    QTimer.singleShot(delay + jitter, lambda m=msg: self._client.send(m))
+            else:
+                remaining.append(msg)
+        self._offline_queue = remaining
+
+    def _refresh_network_state(self) -> None:
+        ip = _get_local_ip()
+        self._last_ip = ip
+        self._network_ready = not ip.startswith("127.") and ip != "0.0.0.0"
 
     def _maybe_fetch_avatar(self, msg: dict[str, Any], sender_ip: str) -> None:
         avatar_sha = msg.get("avatar_sha256") or ""
