@@ -106,11 +106,17 @@ QFrame#chatBubble {{
     border-radius: 12px;
     padding: 10px;
 }}
+QFrame#chatBubble[flash="true"] {{
+    border: 1px solid {NEON_GREEN};
+}}
 QFrame#chatBubbleSelf {{
     background: {BUBBLE_SELF_BG};
     border-radius: 12px;
     padding: 10px;
     border: 1px solid {BUBBLE_SELF_BORDER};
+}}
+QFrame#chatBubbleSelf[flash="true"] {{
+    border: 1px solid {NEON_GREEN};
 }}
 QLabel#nameLabel {{
     color: {NEON_GREEN};

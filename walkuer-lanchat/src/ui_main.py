@@ -316,7 +316,7 @@ class ChatBubble(QFrame):
             self._text_widget.setObjectName("chatText")
             self._text_widget.setTextFormat(Qt.RichText)
             self._text_widget.setOpenExternalLinks(True)
-            self._text_widget.setTextInteractionFlags(Qt.TextSelectableByMouse | Qt.LinksAccessibleByMouse)
+            self._text_widget.setTextInteractionFlags(Qt.TextBrowserInteraction)
             self._text_widget.setWordWrap(True)
             self._text_widget.setStyleSheet("margin: 0px;")
             self._text_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
@@ -749,8 +749,10 @@ class MainWindow(QMainWindow):
         pinned_layout = QHBoxLayout(self.pinned_bar)
         pinned_layout.setContentsMargins(10, 6, 10, 6)
         pinned_layout.setSpacing(6)
-        self.pinned_label = QLabel("")
+        self.pinned_label = ClickableLabel()
         self.pinned_label.setObjectName("pinnedLabel")
+        self.pinned_label.setCursor(Qt.PointingHandCursor)
+        self.pinned_label.clicked.connect(self._scroll_to_pinned)
         self.pinned_clear_btn = QToolButton()
         self.pinned_clear_btn.setObjectName("pinnedClear")
         self.pinned_clear_btn.setText("X")
@@ -1223,6 +1225,35 @@ class MainWindow(QMainWindow):
             return
         bar = self.chat_area.verticalScrollBar()
         QTimer.singleShot(0, lambda: bar.setValue(bar.maximum()))
+
+    def _scroll_to_pinned(self) -> None:
+        if not self._pinned_message:
+            return
+        target_id = self._pinned_message.get("target_id") or ""
+        if not target_id:
+            return
+        if not self._scroll_to_message(target_id):
+            self.show_status("Angepinnte Nachricht nicht gefunden.")
+
+    def _scroll_to_message(self, message_id: str) -> bool:
+        bubble = self._message_bubbles.get(message_id)
+        if not bubble:
+            return False
+        self.chat_area.ensureWidgetVisible(bubble, 0, 20)
+        self._flash_bubble(bubble)
+        return True
+
+    def _flash_bubble(self, bubble: ChatBubble) -> None:
+        bubble.setProperty("flash", True)
+        bubble.style().unpolish(bubble)
+        bubble.style().polish(bubble)
+
+        def clear_flash() -> None:
+            bubble.setProperty("flash", False)
+            bubble.style().unpolish(bubble)
+            bubble.style().polish(bubble)
+
+        QTimer.singleShot(900, clear_flash)
 
     def _on_scroll_changed(self, value: int) -> None:
         bar = self.chat_area.verticalScrollBar()
