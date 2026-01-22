@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import logging
 import random
 import socket
 import struct
@@ -23,19 +24,35 @@ from util.paths import avatar_cache_path
 class MulticastListener(QThread):
     message_received = Signal(dict, str)
 
-    def __init__(self, sock: socket.socket) -> None:
+    def __init__(self, sock: socket.socket, sock_factory) -> None:
         super().__init__()
         self._sock = sock
+        self._sock_factory = sock_factory
         self._stop = threading.Event()
+        self._log = logging.getLogger(__name__)
 
     def run(self) -> None:
+        error_count = 0
         while not self._stop.is_set():
             try:
                 data, addr = self._sock.recvfrom(65536)
             except socket.timeout:
                 continue
             except OSError:
-                break
+                if self._stop.is_set():
+                    break
+                error_count += 1
+                try:
+                    self._sock.close()
+                except Exception:
+                    pass
+                try:
+                    self._sock = self._sock_factory()
+                    error_count = 0
+                    self._log.warning("Multicast receive socket reinitialized after error.")
+                except Exception:
+                    time.sleep(min(1.5, 0.2 * error_count))
+                continue
 
             msg = protocol.parse_message(data)
             if msg:
@@ -58,7 +75,7 @@ class MulticastClient(QObject):
         super().__init__()
         self._send_sock = _create_send_socket()
         self._recv_sock = _create_recv_socket()
-        self._listener = MulticastListener(self._recv_sock)
+        self._listener = MulticastListener(self._recv_sock, _create_recv_socket)
         self._listener.message_received.connect(self.message_received)
         self._listener.start()
         self._lock = threading.Lock()
