@@ -1363,23 +1363,33 @@ class MainWindow(QMainWindow):
             url = f"http://{sender_ip}{parsed.path}"
         filename = msg.get("filename") or "download.bin"
         file_id = msg.get("file_id") or ""
-        if file_id:
-            dest_path = attachment_cache_path(file_id, filename)
-        else:
-            dest_dir = downloads_dir()
-            dest_dir.mkdir(parents=True, exist_ok=True)
-            dest_path = _unique_path(dest_dir, filename)
 
-        if dest_path.exists():
-            bubble = self._file_bubbles.get(file_id) if file_id else None
-            if bubble:
-                bubble.set_download_status("Bereits vorhanden")
-                if _is_image_file(filename):
-                    bubble.set_image_preview(str(dest_path))
+        from PySide6.QtWidgets import QFileDialog
+        dest_dir = downloads_dir()
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        suggested = dest_dir / filename
+        dest_file, _ = QFileDialog.getSaveFileName(self, "Datei speichern", str(suggested), "Alle Dateien (*)")
+        if not dest_file:
             return
+        dest_path = Path(dest_file)
 
-        file_id = msg.get("file_id")
         bubble = self._file_bubbles.get(file_id) if file_id else None
+        cached_path = attachment_cache_path(file_id, filename) if file_id else None
+        if cached_path and cached_path.exists():
+            try:
+                dest_path.parent.mkdir(parents=True, exist_ok=True)
+                import shutil
+
+                shutil.copy2(cached_path, dest_path)
+                if bubble:
+                    bubble.set_download_status("Gespeichert")
+                if _is_image_file(filename):
+                    bubble.set_image_preview(str(cached_path))
+                self.status_label.setText(f"Gespeichert: {filename}")
+                return
+            except Exception:
+                pass
+
         if bubble:
             bubble.set_download_status("Lädt...")
             bubble.set_download_progress(0)

@@ -62,6 +62,14 @@ Platzhalter: Ersetze die SVGs später durch echte Screenshots (gleiches Dateinam
 2. Windows-Firewall kann beim ersten Start fragen: Zugriff erlauben.
 3. Chatten, Dateien ziehen, fertig.
 
+## Einstellungen
+- Benutzername frei wählbar.
+- Avatar wählen oder entfernen (Vorschau rund).
+- Theme-Auswahl: Standard, Pink Pupa, Midnight Blue, Mono Minimal.
+- Sound bei neuen Nachrichten (an/aus).
+- Tray-Popups (an/aus).
+- Lokale API aktivieren: URL + Token anzeigen, Token neu generieren.
+
 ## Technik (Kurz)
 - Python 3.11+, PySide6 (Qt)
 - UDP Multicast Discovery + Global Chat
@@ -115,11 +123,3 @@ Wenn du Walkür LAN Chat nutzt oder weitergibst, ist die Attribution Pflicht:
 - https://strategus.one
 
 Details in `LICENSE.md`.
-
-## Manuelle Tests
-- Zwei PCs im gleichen LAN:
-  - Discovery zeigt online count = 2
-  - Text senden, kommt bei beiden an
-  - Datei senden, Download klappt
-  - X -> Tray
-  - Neue Nachricht -> Tray Popup + Beep
