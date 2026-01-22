@@ -27,8 +27,9 @@ def _in_ranges(pos: int, ranges: list[tuple[int, int]]) -> bool:
 
 
 def _break_url(text: str) -> str:
+    zwsp = "\u200b"
     for ch in ["/", "?", "&", "=", "-", "_", "."]:
-        text = text.replace(ch, f"{ch}&#8203;")
+        text = text.replace(ch, f"{ch}{zwsp}")
     return text
 
 

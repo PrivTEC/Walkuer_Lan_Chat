@@ -134,6 +134,8 @@ QLabel#chatTextMuted {{
 }}
 QLabel#chatText a {{
     color: {NEON_GREEN};
+    text-decoration: underline;
+    font-weight: 600;
 }}
 QLabel#avatarPreview {{
     background: {INPUT_BG};
@@ -413,7 +415,7 @@ QMenu::item:selected {{
 
 
 DEFAULT_THEME = "Standard"
-PINK_PUPA_THEME = "Pink Pupa (Alina Version)"
+PINK_PUPA_THEME = "Pink Pupa (Girlfirend Version)"
 MIDNIGHT_BLUE_THEME = "Midnight Blue"
 MONO_MINIMAL_THEME = "Mono Minimal"
 

@@ -91,6 +91,26 @@ class MulticastClient(QObject):
             except Exception:
                 return False
 
+    def refresh_sockets(self) -> None:
+        with self._lock:
+            try:
+                self._listener.stop()
+            except Exception:
+                pass
+            try:
+                self._recv_sock.close()
+            except Exception:
+                pass
+            try:
+                self._send_sock.close()
+            except Exception:
+                pass
+            self._send_sock = _create_send_socket()
+            self._recv_sock = _create_recv_socket()
+            self._listener = MulticastListener(self._recv_sock, _create_recv_socket)
+            self._listener.message_received.connect(self.message_received)
+            self._listener.start()
+
     def close(self) -> None:
         try:
             self._listener.stop()
@@ -166,6 +186,10 @@ class LanChatNetwork(QObject):
         self._prune_timer = QTimer(self)
         self._prune_timer.timeout.connect(self._prune)
         self._prune_timer.start(2000)
+
+        self._refresh_timer = QTimer(self)
+        self._refresh_timer.timeout.connect(self._refresh_multicast)
+        self._refresh_timer.start(30000)
 
         self._discovery.update_hello(
             protocol.build_hello(
@@ -434,6 +458,10 @@ class LanChatNetwork(QObject):
         self._discovery.prune(8)
         self.peers_updated.emit(self._discovery.snapshot())
 
+    def _refresh_multicast(self) -> None:
+        self._client.refresh_sockets()
+        self.send_hello()
+
     def set_typing(self, typing: bool) -> None:
         if typing == self._typing:
             return
@@ -449,6 +477,7 @@ class LanChatNetwork(QObject):
         try:
             self._hello_timer.stop()
             self._prune_timer.stop()
+            self._refresh_timer.stop()
         except Exception:
             pass
         self._client.close()

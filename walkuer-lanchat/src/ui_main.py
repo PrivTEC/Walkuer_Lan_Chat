@@ -649,6 +649,11 @@ class MainWindow(QMainWindow):
         minimize_btn.setIconSize(QSize(12, 12))
         minimize_btn.setToolTip("Minimieren")
         minimize_btn.clicked.connect(self.showMinimized)
+        self._max_btn = QToolButton()
+        self._max_btn.setIcon(style.standardIcon(QStyle.SP_TitleBarMaxButton))
+        self._max_btn.setIconSize(QSize(12, 12))
+        self._max_btn.setToolTip("Maximieren")
+        self._max_btn.clicked.connect(self._toggle_maximize)
         close_btn = QToolButton()
         close_btn.setIcon(style.standardIcon(QStyle.SP_TitleBarCloseButton))
         close_btn.setIconSize(QSize(12, 12))
@@ -660,6 +665,7 @@ class MainWindow(QMainWindow):
         top_layout.addStretch(1)
         top_layout.addWidget(settings_btn)
         top_layout.addWidget(minimize_btn)
+        top_layout.addWidget(self._max_btn)
         top_layout.addWidget(close_btn)
 
         self._drag_widgets = {topbar, title_label, icon_label}
@@ -868,6 +874,7 @@ class MainWindow(QMainWindow):
         self.setStatusBar(self.status)
 
         self._render_user_list()
+        self._update_maximize_icon()
 
     def resizeEvent(self, event):  # noqa: N802 - Qt naming
         super().resizeEvent(event)
@@ -1294,6 +1301,10 @@ class MainWindow(QMainWindow):
 
     def eventFilter(self, obj, event):  # noqa: N802 - Qt naming
         if obj in getattr(self, "_drag_widgets", set()):
+            if event.type() == QEvent.MouseButtonDblClick and event.button() == Qt.LeftButton:
+                self._drag_active = False
+                self._toggle_maximize()
+                return True
             if event.type() == QEvent.MouseButtonPress and event.button() == Qt.LeftButton:
                 self._drag_active = True
                 self._drag_offset = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
@@ -1307,6 +1318,29 @@ class MainWindow(QMainWindow):
                 self._drag_active = False
                 return True
         return super().eventFilter(obj, event)
+
+    def changeEvent(self, event):  # noqa: N802 - Qt naming
+        if event.type() == QEvent.WindowStateChange:
+            self._update_maximize_icon()
+        super().changeEvent(event)
+
+    def _toggle_maximize(self) -> None:
+        if self.windowState() & Qt.WindowMaximized:
+            self.showNormal()
+        else:
+            self.showMaximized()
+        self._update_maximize_icon()
+
+    def _update_maximize_icon(self) -> None:
+        if not hasattr(self, "_max_btn"):
+            return
+        style = self.style()
+        if self.windowState() & Qt.WindowMaximized:
+            self._max_btn.setIcon(style.standardIcon(QStyle.SP_TitleBarNormalButton))
+            self._max_btn.setToolTip("Wiederherstellen")
+        else:
+            self._max_btn.setIcon(style.standardIcon(QStyle.SP_TitleBarMaxButton))
+            self._max_btn.setToolTip("Maximieren")
 
     def dragEnterEvent(self, event):  # noqa: N802 - Qt naming
         if event.mimeData().hasUrls():
