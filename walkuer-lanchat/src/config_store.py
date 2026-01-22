@@ -20,6 +20,8 @@ class AppConfig:
     sound_enabled: bool
     tray_notifications: bool
     theme: str
+    api_enabled: bool
+    api_token: str
     first_run_complete: bool
 
 
@@ -38,6 +40,8 @@ class ConfigStore:
             sound_enabled=True,
             tray_notifications=True,
             theme="Standard",
+            api_enabled=True,
+            api_token=str(uuid.uuid4()),
             first_run_complete=False,
         )
 
@@ -54,6 +58,8 @@ class ConfigStore:
                     sound_enabled=bool(raw.get("sound_enabled", True)),
                     tray_notifications=bool(raw.get("tray_notifications", True)),
                     theme=raw.get("theme") or "Standard",
+                    api_enabled=bool(raw.get("api_enabled", True)),
+                    api_token=raw.get("api_token") or str(uuid.uuid4()),
                     first_run_complete=bool(raw.get("first_run_complete", False)),
                 )
             except Exception:
@@ -74,7 +80,13 @@ class ConfigStore:
 
         if not self.config.sender_id:
             self.config.sender_id = str(uuid.uuid4())
+        if not self.config.api_token:
+            self.config.api_token = str(uuid.uuid4())
         return self.config
+
+    def regenerate_api_token(self) -> str:
+        self.config.api_token = str(uuid.uuid4())
+        return self.config.api_token
 
     def save(self) -> None:
         ensure_dirs()

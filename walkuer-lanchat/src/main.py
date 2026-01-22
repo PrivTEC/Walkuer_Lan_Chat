@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import sys
+import threading
 from logging.handlers import RotatingFileHandler
 
 from PySide6.QtCore import QSettings
@@ -10,6 +11,7 @@ from PySide6.QtWidgets import QApplication
 from config_store import ConfigStore
 from net.message_store import HistoryStore
 from net.multicast import LanChatNetwork
+from net.api_service import ApiService
 from theme import apply_theme
 from tray import TrayManager
 from ui_about import AboutDialog
@@ -104,6 +106,35 @@ def main() -> int:
         settings.setValue("geometry", window.saveGeometry())
 
     tray = None
+    api_lock = threading.Lock()
+    api_state = {"peers": [], "pinned": None}
+
+    def update_api_peers(peers: list[dict]) -> None:
+        with api_lock:
+            api_state["peers"] = list(peers)
+
+    def get_api_peers() -> list[dict]:
+        with api_lock:
+            return list(api_state["peers"])
+
+    def update_api_pinned(pinned: dict | None) -> None:
+        with api_lock:
+            api_state["pinned"] = dict(pinned) if pinned else None
+
+    def get_api_pinned() -> dict | None:
+        with api_lock:
+            pinned = api_state["pinned"]
+            return dict(pinned) if pinned else None
+
+    def get_api_history() -> list[dict]:
+        return list(history.items)
+
+    def get_api_self() -> dict:
+        return {
+            "sender_id": store.config.sender_id,
+            "name": store.config.user_name,
+            "avatar_sha256": store.config.avatar_sha256,
+        }
 
     def notify_if_needed(msg: dict) -> None:
         if not window.should_notify():
@@ -207,9 +238,10 @@ def main() -> int:
                 window.show_status("Datei konnte nicht gesendet werden.")
 
     def show_settings(force: bool = False) -> None:
-        dlg = SettingsDialog(store, force=force, parent=window)
+        dlg = SettingsDialog(store, api_url=_api_url(), force=force, parent=window)
         dlg.saved.connect(lambda: network.send_hello())
         dlg.saved.connect(lambda: apply_theme(app, store.config.theme))
+        dlg.saved.connect(apply_api_settings)
         dlg.exec()
 
     def show_about() -> None:
@@ -223,6 +255,39 @@ def main() -> int:
         window.allow_close()
         app.quit()
 
+    api_service = ApiService(
+        token=store.config.api_token,
+        enabled=store.config.api_enabled,
+        send_text=window.send_text.emit,
+        send_files=window.send_files.emit,
+        send_edit=window.edit_message.emit,
+        send_undo=window.undo_message.emit,
+        send_pin=window.pin_message.emit,
+        send_unpin=window.unpin_message.emit,
+        get_peers=get_api_peers,
+        get_history=get_api_history,
+        get_pinned=get_api_pinned,
+        get_queue_size=network.queue_size,
+        get_self_info=get_api_self,
+    )
+
+    network.set_api_service(api_service)
+    network.ensure_api(store.config.api_enabled)
+    update_api_peers(network.peers_snapshot())
+    update_api_pinned(window.get_pinned_message())
+
+    def _api_url() -> str:
+        port = network.api_port()
+        if port <= 0:
+            return "http://127.0.0.1:<port>/api/v1/"
+        return f"http://127.0.0.1:{port}/api/v1/"
+
+    def apply_api_settings() -> None:
+        api_service.set_token(store.config.api_token)
+        api_service.set_enabled(store.config.api_enabled)
+        network.set_api_enabled(store.config.api_enabled)
+        network.ensure_api(store.config.api_enabled)
+
     window.send_text.connect(handle_send_text)
     window.send_files.connect(handle_send_files)
     window.reaction_send.connect(lambda target_id, emoji: network.send_reaction(target_id, emoji))
@@ -230,6 +295,7 @@ def main() -> int:
     window.undo_message.connect(handle_undo_message)
     window.pin_message.connect(handle_pin_message)
     window.unpin_message.connect(handle_unpin_message)
+    window.pinned_changed.connect(update_api_pinned)
     window.typing_changed.connect(network.set_typing)
     window.open_settings.connect(lambda: show_settings(False))
     window.open_about.connect(show_about)
@@ -238,6 +304,7 @@ def main() -> int:
     network.file_received.connect(handle_incoming)
     network.online_count.connect(window.set_online_count)
     network.peers_updated.connect(window.set_peers)
+    network.peers_updated.connect(update_api_peers)
     network.avatar_updated.connect(window.refresh_avatar)
 
     window.set_peers(network.peers_snapshot())

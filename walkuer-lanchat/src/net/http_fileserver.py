@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import mimetypes
-import os
 import threading
+import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Optional
+
+from net.api_service import ApiService
 
 
 class FileRegistry:
@@ -37,12 +39,16 @@ class _Handler(BaseHTTPRequestHandler):
     server: "FileHttpServer"
 
     def do_GET(self) -> None:  # noqa: N802 - required by BaseHTTPRequestHandler
-        if self.path.startswith("/f/"):
-            file_id = self.path.replace("/f/", "", 1).strip("/")
+        parsed = urllib.parse.urlparse(self.path)
+        if parsed.path.startswith("/api/"):
+            self._handle_api("GET", parsed)
+            return
+        if parsed.path.startswith("/f/"):
+            file_id = parsed.path.replace("/f/", "", 1).strip("/")
             path = self.server.registry.get(file_id)
             download_name = path.name if path else "download.bin"
-        elif self.path.startswith("/avatar/"):
-            sha256 = self.path.replace("/avatar/", "", 1).strip("/")
+        elif parsed.path.startswith("/avatar/"):
+            sha256 = parsed.path.replace("/avatar/", "", 1).strip("/")
             path = self.server.registry.get_avatar(sha256)
             download_name = f"avatar_{sha256}.png"
         else:
@@ -71,6 +77,49 @@ class _Handler(BaseHTTPRequestHandler):
             except Exception:
                 pass
 
+    def do_POST(self) -> None:  # noqa: N802 - required by BaseHTTPRequestHandler
+        parsed = urllib.parse.urlparse(self.path)
+        if parsed.path.startswith("/api/"):
+            self._handle_api("POST", parsed)
+            return
+        self.send_error(405)
+
+    def do_OPTIONS(self) -> None:  # noqa: N802 - required by BaseHTTPRequestHandler
+        parsed = urllib.parse.urlparse(self.path)
+        if parsed.path.startswith("/api/"):
+            self.send_response(200)
+            self.send_header("Access-Control-Allow-Origin", "http://localhost")
+            self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+            self.send_header("Access-Control-Allow-Headers", "Content-Type, X-API-Token")
+            self.end_headers()
+            return
+        self.send_error(405)
+
+    def _handle_api(self, method: str, parsed: urllib.parse.ParseResult) -> None:
+        api_service = self.server.api_service
+        if not api_service or not self.server.api_enabled:
+            self.send_error(404)
+            return
+        if not _is_localhost(self.client_address[0]):
+            self.send_error(403)
+            return
+        length = int(self.headers.get("Content-Length", "0") or 0)
+        body = self.rfile.read(length) if length else b""
+        status, payload, content_type = api_service.handle(
+            method,
+            parsed.path,
+            parsed.query,
+            body,
+            {k: v for k, v in self.headers.items()},
+            self.server.server_address[1],
+        )
+        self.send_response(status)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Access-Control-Allow-Origin", "http://localhost")
+        self.end_headers()
+        self.wfile.write(payload)
+
     def log_message(self, format: str, *args) -> None:  # noqa: A002 - signature
         return
 
@@ -78,9 +127,17 @@ class _Handler(BaseHTTPRequestHandler):
 class FileHttpServer(ThreadingHTTPServer):
     daemon_threads = True
 
-    def __init__(self, server_address: tuple[str, int], registry: FileRegistry) -> None:
+    def __init__(
+        self,
+        server_address: tuple[str, int],
+        registry: FileRegistry,
+        api_service: ApiService | None,
+        api_enabled: bool,
+    ) -> None:
         super().__init__(server_address, _Handler)
         self.registry = registry
+        self.api_service = api_service
+        self.api_enabled = api_enabled
 
 
 class FileServer:
@@ -89,6 +146,8 @@ class FileServer:
         self._server: FileHttpServer | None = None
         self._thread: threading.Thread | None = None
         self._port_range = port_range
+        self._api_service: ApiService | None = None
+        self._api_enabled = True
 
     @property
     def port(self) -> int:
@@ -101,7 +160,12 @@ class FileServer:
             return self.port
         for port in range(self._port_range[0], self._port_range[1] + 1):
             try:
-                self._server = FileHttpServer(("0.0.0.0", port), self._registry)
+                self._server = FileHttpServer(
+                    ("0.0.0.0", port),
+                    self._registry,
+                    self._api_service,
+                    self._api_enabled,
+                )
                 break
             except OSError:
                 continue
@@ -118,6 +182,16 @@ class FileServer:
     def register_avatar(self, sha256: str, path: str) -> None:
         self._registry.register_avatar(sha256, path)
 
+    def set_api_service(self, service: ApiService | None) -> None:
+        self._api_service = service
+        if self._server:
+            self._server.api_service = service
+
+    def set_api_enabled(self, enabled: bool) -> None:
+        self._api_enabled = enabled
+        if self._server:
+            self._server.api_enabled = enabled
+
     def shutdown(self) -> None:
         if self._server:
             try:
@@ -126,3 +200,7 @@ class FileServer:
             except Exception:
                 pass
             self._server = None
+
+
+def _is_localhost(addr: str) -> bool:
+    return addr in {"127.0.0.1", "::1"}

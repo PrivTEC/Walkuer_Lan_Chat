@@ -289,6 +289,25 @@ class LanChatNetwork(QObject):
             self.send_hello()
         self._file_server.register_file(file_id, file_path)
 
+    def set_api_service(self, api_service) -> None:
+        self._file_server.set_api_service(api_service)
+
+    def set_api_enabled(self, enabled: bool) -> None:
+        self._file_server.set_api_enabled(enabled)
+
+    def ensure_api(self, enabled: bool) -> int:
+        self.set_api_enabled(enabled)
+        if not enabled:
+            return 0
+        port = self._file_server.ensure_running()
+        if port and port != self._http_port:
+            self._http_port = port
+            self.send_hello()
+        return port
+
+    def api_port(self) -> int:
+        return self._file_server.port
+
     def _send_with_retries(self, msg: dict[str, Any]) -> None:
         if not self._client.send(msg):
             return
@@ -420,6 +439,9 @@ class LanChatNetwork(QObject):
 
     def peers_snapshot(self) -> list[dict[str, Any]]:
         return self._discovery.snapshot()
+
+    def queue_size(self) -> int:
+        return len(self._offline_queue)
 
 
 def _get_local_ip() -> str:

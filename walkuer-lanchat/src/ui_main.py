@@ -582,6 +582,7 @@ class MainWindow(QMainWindow):
     undo_message = Signal(str)
     pin_message = Signal(str, str)
     unpin_message = Signal(str)
+    pinned_changed = Signal(object)
     typing_changed = Signal(bool)
     open_settings = Signal()
     open_about = Signal()
@@ -992,6 +993,7 @@ class MainWindow(QMainWindow):
         self.pinned_bar.show()
         for bubble in self._message_bubbles.values():
             bubble.set_pinned(bubble.msg.get("message_id") == target_id)
+        self.pinned_changed.emit(dict(self._pinned_message))
 
     def apply_unpin(self, target_id: str) -> None:
         if self._pinned_message and self._pinned_message.get("target_id") == target_id:
@@ -999,6 +1001,12 @@ class MainWindow(QMainWindow):
         self.pinned_bar.hide()
         for bubble in self._message_bubbles.values():
             bubble.set_pinned(False)
+        self.pinned_changed.emit(None)
+
+    def get_pinned_message(self) -> dict[str, Any] | None:
+        if not self._pinned_message:
+            return None
+        return dict(self._pinned_message)
 
     def refresh_avatar(self, sender_id: str, avatar_sha: str) -> None:
         for idx in range(self.chat_layout.count()):

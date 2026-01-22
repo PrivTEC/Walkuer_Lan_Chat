@@ -21,11 +21,12 @@ from util.images import load_avatar_pixmap
 class SettingsDialog(QDialog):
     saved = Signal()
 
-    def __init__(self, store: ConfigStore, force: bool = False, parent=None) -> None:
+    def __init__(self, store: ConfigStore, api_url: str = "", force: bool = False, parent=None) -> None:
         super().__init__(parent)
         self._store = store
         self._pending_avatar: str | None = None
         self._force = force
+        self._api_url = api_url
 
         self.setWindowTitle("Einstellungen")
         self.setModal(True)
@@ -71,6 +72,23 @@ class SettingsDialog(QDialog):
         self.tray_toggle = QCheckBox("Tray-Popups")
         self.tray_toggle.setChecked(store.config.tray_notifications)
 
+        api_label = QLabel("Lokale API")
+        self.api_toggle = QCheckBox("API aktivieren (localhost)")
+        self.api_toggle.setChecked(store.config.api_enabled)
+
+        api_url_label = QLabel("API URL")
+        self.api_url_value = QLineEdit(api_url or "http://127.0.0.1:<port>/api/v1/")
+        self.api_url_value.setReadOnly(True)
+
+        api_token_label = QLabel("API Token")
+        self.api_token_value = QLineEdit(store.config.api_token)
+        self.api_token_value.setReadOnly(True)
+        token_row = QHBoxLayout()
+        token_row.addWidget(self.api_token_value, 1)
+        token_regen = QPushButton("Token neu")
+        token_regen.clicked.connect(self._regen_api_token)
+        token_row.addWidget(token_regen)
+
         save_btn = QPushButton("Speichern")
         save_btn.setObjectName("primaryButton")
         save_btn.clicked.connect(self._save)
@@ -84,6 +102,12 @@ class SettingsDialog(QDialog):
         layout.addWidget(self.theme_select)
         layout.addWidget(self.sound_toggle)
         layout.addWidget(self.tray_toggle)
+        layout.addWidget(api_label)
+        layout.addWidget(self.api_toggle)
+        layout.addWidget(api_url_label)
+        layout.addWidget(self.api_url_value)
+        layout.addWidget(api_token_label)
+        layout.addLayout(token_row)
         layout.addStretch(1)
         layout.addWidget(save_btn, alignment=Qt.AlignRight)
 
@@ -118,12 +142,17 @@ class SettingsDialog(QDialog):
         self._pending_avatar = ""
         self._refresh_preview()
 
+    def _regen_api_token(self) -> None:
+        new_token = self._store.regenerate_api_token()
+        self.api_token_value.setText(new_token)
+
     def _save(self) -> None:
         name = self.name_input.text().strip() or "User"
         self._store.config.user_name = name
         self._store.config.theme = self.theme_select.currentText()
         self._store.config.sound_enabled = self.sound_toggle.isChecked()
         self._store.config.tray_notifications = self.tray_toggle.isChecked()
+        self._store.config.api_enabled = self.api_toggle.isChecked()
         self._store.config.first_run_complete = True
 
         if self._pending_avatar is not None:
