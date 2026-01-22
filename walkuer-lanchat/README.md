@@ -7,6 +7,8 @@
   <p>
     <a href="API.md">API</a> ·
     <a href="#features">Features</a> ·
+    <a href="#funktionen-im-detail">Funktionen</a> ·
+    <a href="#screenshots">Screenshots</a> ·
     <a href="#start">Start</a> ·
     <a href="LICENSE.md">Lizenz</a>
   </p>
@@ -27,8 +29,25 @@ Walkür LAN Chat ist ein winziges Windows-Tool für den lokalen Netzwerk-Chat: e
 - Benutzername + Avatar, Themes, moderne Chat-Bubbles.
 - Kein Admin nötig, Windows 10+ kompatibel.
 
+## Funktionen im Detail
+- Chat & Formatierung: Markdown-Light mit klickbaren Links, sicheres Fallback, Textlimit 8 KB.
+- Interaktionen: Antworten, Reaktionen, Edit/Undo, Pin-Leiste mit Sprung zur Nachricht.
+- Presence: Online-Liste, letzter Online-Zeitpunkt, "tippt..." Status.
+- Dateien: Drag-and-Drop, lokaler HTTP-Download, Fortschritt + Retry, Inline-Bildvorschau.
+- Offline Queue: Nachrichten werden bei Netzwerkverlust gepuffert und später gesendet.
+- Persistenz: History + Attachments/Avatare unter `%USERPROFILE%\.walkuer-lanchat\`.
+
 ## Warum es besonders ist
 Kompakt, schnell, lokal. Für Teams, Studios, Werkstatt, Büro, LAN-Parties oder Intranet-Labs. Kein Setup, kein Account, keine Serverkosten. Einfach "klicky-bunti" und produktiv.
+
+## Screenshots
+<div align="center">
+  <img src="assets/screenshot-placeholder-1.svg" alt="Hauptfenster (Platzhalter)" width="100%" />
+  <img src="assets/screenshot-placeholder-2.svg" alt="Einstellungen (Platzhalter)" width="100%" />
+  <img src="assets/screenshot-placeholder-3.svg" alt="Datei-Transfer (Platzhalter)" width="100%" />
+</div>
+
+Platzhalter: Ersetze die SVGs später durch echte Screenshots (gleiches Dateinamen-Format).
 
 ## Start
 ### Dev
@@ -49,6 +68,39 @@ Kompakt, schnell, lokal. Für Teams, Studios, Werkstatt, Büro, LAN-Parties oder
 - Lokaler HTTP-Server nur für Attachments
 - Nachrichtendedup mit UUID + Cache
 - Tray via QSystemTrayIcon
+
+## API (lokal)
+Die lokale API macht es möglich, die App per Skript/Agent zu steuern. Sie läuft auf `127.0.0.1` und ist standardmäßig deaktiviert.
+
+**Aktivieren**
+1. Einstellungen öffnen → "API aktivieren (localhost)".
+2. API-URL und Token werden angezeigt (Token kann neu erzeugt werden).
+
+**Auth**
+- Header: `X-API-Token: <token>`  
+oder  
+- Query: `?token=<token>`
+
+**Wichtige Endpoints**
+- `GET /api/v1/` Self-Description
+- `GET /api/v1/status` Status + API-URL
+- `GET /api/v1/peers` Online-Peers
+- `GET /api/v1/messages?limit=50` History
+- `POST /api/v1/send` Text senden
+- `POST /api/v1/send/file` Datei senden (lokaler Pfad)
+- `POST /api/v1/pin` / `POST /api/v1/unpin`
+- `POST /api/v1/edit` / `POST /api/v1/undo`
+
+**Quickstart (PowerShell)**
+```powershell
+$token = "<token>"
+$base = "http://127.0.0.1:<port>/api/v1"
+curl.exe "$base/status"
+curl.exe -H "X-API-Token: $token" -H "Content-Type: application/json" `
+  -d "{\"text\":\"Hallo LAN\"}" "$base/send"
+```
+
+Details in `API.md`.
 
 ## Suche & Keywords
 LAN Chat, Windows LAN Chat, LAN Messenger, Intranet Chat, Local Chat, UDP Multicast, Peer-to-Peer Chat, Broadcast Chat, No Server Chat, File Transfer LAN, Windows Tray Chat, PySide6, Python 3.11, Walkür Technology, Strategus One, Silvan Fülle
