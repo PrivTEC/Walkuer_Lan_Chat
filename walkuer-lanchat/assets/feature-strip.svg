@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="1280" height="220" viewBox="0 0 1280 220" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Walkuer LAN Chat Features">
+  <rect width="1280" height="220" rx="18" fill="#0C120F"/>
+  <rect x="16" y="16" width="1248" height="188" rx="16" fill="#0F1714" stroke="#1C2A22"/>
+
+  <g font-family="Bahnschrift, Segoe UI, Arial, sans-serif" fill="#E6FFE0">
+    <g transform="translate(70 56)">
+      <circle cx="24" cy="24" r="24" fill="#0E1A12" stroke="#2C5C38"/>
+      <path d="M18 24h12M24 18v12" stroke="#39FF14" stroke-width="2" stroke-linecap="round"/>
+      <text x="60" y="20" font-size="16">Kein Server</text>
+      <text x="60" y="42" font-size="12" fill="#8FB39A">Direkt im LAN</text>
+    </g>
+
+    <g transform="translate(380 56)">
+      <circle cx="24" cy="24" r="24" fill="#0E1A12" stroke="#2C5C38"/>
+      <path d="M14 26l10-10 10 10" stroke="#39FF14" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+      <text x="60" y="20" font-size="16">Auto-Discovery</text>
+      <text x="60" y="42" font-size="12" fill="#8FB39A">UDP Multicast</text>
+    </g>
+
+    <g transform="translate(700 56)">
+      <circle cx="24" cy="24" r="24" fill="#0E1A12" stroke="#2C5C38"/>
+      <path d="M14 30h20M16 20h16" stroke="#39FF14" stroke-width="2" stroke-linecap="round"/>
+      <text x="60" y="20" font-size="16">Dateien</text>
+      <text x="60" y="42" font-size="12" fill="#8FB39A">Drag &amp; Drop</text>
+    </g>
+
+    <g transform="translate(980 56)">
+      <circle cx="24" cy="24" r="24" fill="#0E1A12" stroke="#2C5C38"/>
+      <path d="M18 16h12v12H18z" stroke="#39FF14" stroke-width="2"/>
+      <text x="60" y="20" font-size="16">Tray</text>
+      <text x="60" y="42" font-size="12" fill="#8FB39A">Benachrichtigungen</text>
+    </g>
+  </g>
+
+  <g font-family="Bahnschrift, Segoe UI, Arial, sans-serif" fill="#8FB39A">
+    <text x="70" y="160" font-size="12">Markdown-Light · Themes · Windows 10+ · Lokale API</text>
+  </g>
+</svg>
