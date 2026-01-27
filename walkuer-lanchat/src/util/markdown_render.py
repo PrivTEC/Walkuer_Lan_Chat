@@ -8,6 +8,7 @@ import markdown
 _URL_RE = re.compile(r"(?P<url>(https?://|www\.)[^\s<]+)")
 _LINK_RE = re.compile(r"\[[^\]]+\]\([^)]+\)")
 _LINK_URL_RE = re.compile(r"\[[^\]]+\]\((?P<url>[^)]+)\)")
+_HREF_RE = re.compile(r"""href=["'](?P<url>[^"']+)["']""")
 _CODE_RE = re.compile(r"`[^`]*`")
 _LONG_TOKEN_RE = re.compile(r"[^\s]{28,}")
 
@@ -101,6 +102,13 @@ def _auto_link(text: str) -> str:
 def extract_first_url(text: str) -> str:
     if not text:
         return ""
+    # Strip zero-width characters that can appear after copy/paste and break URL detection.
+    text = (
+        text.replace("\u200b", "")
+        .replace("\u200c", "")
+        .replace("\u200d", "")
+        .replace("\ufeff", "")
+    )
     for match in _LINK_URL_RE.finditer(text):
         url = _normalize_url(match.group("url") or "")
         if url:
@@ -111,6 +119,10 @@ def extract_first_url(text: str) -> str:
     for match in _URL_RE.finditer(text):
         if _in_ranges(match.start(), code_ranges):
             continue
+        url = _normalize_url(match.group("url") or "")
+        if url:
+            return url
+    for match in _HREF_RE.finditer(text):
         url = _normalize_url(match.group("url") or "")
         if url:
             return url
