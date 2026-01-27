@@ -22,6 +22,7 @@ class AppConfig:
     theme: str
     api_enabled: bool
     api_token: str
+    expert_mode: bool
     first_run_complete: bool
 
 
@@ -37,11 +38,12 @@ class ConfigStore:
             user_name=default_name,
             avatar_path="",
             avatar_sha256="",
-            sound_enabled=True,
+            sound_enabled=False,
             tray_notifications=True,
             theme="Standard",
             api_enabled=True,
             api_token=str(uuid.uuid4()),
+            expert_mode=False,
             first_run_complete=False,
         )
 
@@ -55,11 +57,12 @@ class ConfigStore:
                     user_name=raw.get("user_name") or self.config.user_name,
                     avatar_path=raw.get("avatar_path") or "",
                     avatar_sha256=raw.get("avatar_sha256") or "",
-                    sound_enabled=bool(raw.get("sound_enabled", True)),
+                    sound_enabled=bool(raw.get("sound_enabled", False)),
                     tray_notifications=bool(raw.get("tray_notifications", True)),
                     theme=raw.get("theme") or "Standard",
                     api_enabled=bool(raw.get("api_enabled", True)),
                     api_token=raw.get("api_token") or str(uuid.uuid4()),
+                    expert_mode=bool(raw.get("expert_mode", False)),
                     first_run_complete=bool(raw.get("first_run_complete", False)),
                 )
             except Exception:

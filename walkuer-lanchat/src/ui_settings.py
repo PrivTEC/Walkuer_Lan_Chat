@@ -6,6 +6,7 @@ from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
     QFileDialog,
+    QFrame,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -72,6 +73,9 @@ class SettingsDialog(QDialog):
         self.tray_toggle = QCheckBox("Tray-Popups")
         self.tray_toggle.setChecked(store.config.tray_notifications)
 
+        self.expert_toggle = QCheckBox("Expertenmodus (API-Einstellungen anzeigen)")
+        self.expert_toggle.setChecked(store.config.expert_mode)
+
         api_label = QLabel("Lokale API")
         self.api_toggle = QCheckBox("API aktivieren (localhost)")
         self.api_toggle.setChecked(store.config.api_enabled)
@@ -89,6 +93,17 @@ class SettingsDialog(QDialog):
         token_regen.clicked.connect(self._regen_api_token)
         token_row.addWidget(token_regen)
 
+        self.api_section = QFrame()
+        api_layout = QVBoxLayout(self.api_section)
+        api_layout.setContentsMargins(0, 0, 0, 0)
+        api_layout.setSpacing(6)
+        api_layout.addWidget(api_label)
+        api_layout.addWidget(self.api_toggle)
+        api_layout.addWidget(api_url_label)
+        api_layout.addWidget(self.api_url_value)
+        api_layout.addWidget(api_token_label)
+        api_layout.addLayout(token_row)
+
         save_btn = QPushButton("Speichern")
         save_btn.setObjectName("primaryButton")
         save_btn.clicked.connect(self._save)
@@ -102,12 +117,8 @@ class SettingsDialog(QDialog):
         layout.addWidget(self.theme_select)
         layout.addWidget(self.sound_toggle)
         layout.addWidget(self.tray_toggle)
-        layout.addWidget(api_label)
-        layout.addWidget(self.api_toggle)
-        layout.addWidget(api_url_label)
-        layout.addWidget(self.api_url_value)
-        layout.addWidget(api_token_label)
-        layout.addLayout(token_row)
+        layout.addWidget(self.expert_toggle)
+        layout.addWidget(self.api_section)
         layout.addStretch(1)
         layout.addWidget(save_btn, alignment=Qt.AlignRight)
 
@@ -115,6 +126,9 @@ class SettingsDialog(QDialog):
             cancel_btn = QPushButton("Abbrechen")
             cancel_btn.clicked.connect(self.reject)
             layout.addWidget(cancel_btn, alignment=Qt.AlignRight)
+
+        self.expert_toggle.toggled.connect(self._update_expert_visibility)
+        self._update_expert_visibility()
 
     def _refresh_preview(self) -> None:
         config = self._store.config
@@ -153,6 +167,7 @@ class SettingsDialog(QDialog):
         self._store.config.sound_enabled = self.sound_toggle.isChecked()
         self._store.config.tray_notifications = self.tray_toggle.isChecked()
         self._store.config.api_enabled = self.api_toggle.isChecked()
+        self._store.config.expert_mode = self.expert_toggle.isChecked()
         self._store.config.first_run_complete = True
 
         if self._pending_avatar is not None:
@@ -170,3 +185,7 @@ class SettingsDialog(QDialog):
             event.ignore()
         else:
             event.accept()
+
+    def _update_expert_visibility(self) -> None:
+        if hasattr(self, "api_section"):
+            self.api_section.setVisible(self.expert_toggle.isChecked())

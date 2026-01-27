@@ -7,8 +7,8 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import Qt, QThread, QTimer, Signal, QSize, QEvent, QPoint
-from PySide6.QtGui import QPixmap
+from PySide6.QtCore import Qt, QThread, QTimer, Signal, QSize, QEvent, QPoint, QRectF
+from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
     QDialog,
@@ -33,10 +33,11 @@ from PySide6.QtWidgets import (
 )
 
 import app_info
+import theme as theme_mod
 from config_store import ConfigStore
 from net import protocol
-from util.images import load_avatar_pixmap
-from util.markdown_render import render_markdown
+from util.images import load_avatar_pixmap, generate_qr_pixmap
+from util.markdown_render import render_markdown, extract_first_url
 from util.paths import attachment_cache_path, downloads_dir
 from util.timefmt import fmt_time, fmt_time_seconds
 
@@ -228,6 +229,11 @@ class UserListItem(QFrame):
 
 
 class ChatBubble(QFrame):
+    TAIL_OUT = 12
+    TAIL_H = 18
+    RADIUS = 12
+    BORDER_W = 1
+
     reply_requested = Signal(dict)
     reaction_requested = Signal(dict, str)
     download_requested = Signal(dict)
@@ -237,7 +243,7 @@ class ChatBubble(QFrame):
     pin_requested = Signal(dict)
     unpin_requested = Signal(dict)
 
-    def __init__(self, msg: dict, avatar_pixmap, is_self: bool, parent=None) -> None:
+    def __init__(self, msg: dict, is_self: bool, theme_key: str, parent=None) -> None:
         super().__init__(parent)
         self.msg = msg
         self._reactions: dict[str, set[str]] = {}
@@ -245,24 +251,29 @@ class ChatBubble(QFrame):
         self._preview_label: ClickableLabel | None = None
         self._preview_path: str | None = None
         self._text_widget: QLabel | None = None
+        self._qr_label: QLabel | None = None
+        self._qr_url: str | None = None
+        self._reply_preview: QLabel | None = None
         self._time_label: QLabel | None = None
         self._is_self = is_self
+        self._theme_key = theme_key
         self._pinned = False
         self._progress: QProgressBar | None = None
         self._retry_btn: QPushButton | None = None
         self._download_btn: QPushButton | None = None
 
         self.setObjectName("chatBubbleSelf" if is_self else "chatBubble")
-        self.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Minimum)
+        self.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Minimum)
 
         layout = QHBoxLayout(self)
         layout.setSpacing(10)
-        layout.setContentsMargins(12, 10, 12, 10)
-
-        self._avatar_label = QLabel()
-        self._avatar_label.setFixedSize(40, 40)
-        self._avatar_label.setPixmap(avatar_pixmap)
-        self._avatar_label.setScaledContents(True)
+        base_left = 12
+        base_right = 12
+        tail_out = self.TAIL_OUT
+        if is_self:
+            layout.setContentsMargins(base_left, 10, base_right + tail_out, 10)
+        else:
+            layout.setContentsMargins(base_left + tail_out, 10, base_right, 10)
 
         body = QVBoxLayout()
         body.setSpacing(6)
@@ -290,8 +301,6 @@ class ChatBubble(QFrame):
         header.addStretch(1)
         header.addWidget(reply_btn)
         header.addWidget(react_btn)
-        header.addWidget(self._time_label)
-
         body.addLayout(header)
 
         reply_to = msg.get("reply_to")
@@ -304,11 +313,15 @@ class ChatBubble(QFrame):
             reply_layout.setSpacing(2)
             reply_name = QLabel(msg.get("reply_name") or "Antwort")
             reply_name.setObjectName("replyName")
-            reply_preview = QLabel(_trim_text(msg.get("reply_preview") or ""))
-            reply_preview.setObjectName("replyPreview")
-            reply_preview.setWordWrap(True)
+            self._reply_preview = QLabel()
+            self._reply_preview.setObjectName("replyPreview")
+            self._reply_preview.setText(_trim_text(msg.get("reply_preview") or ""))
+            self._reply_preview.setWordWrap(True)
+            self._reply_preview.setMinimumWidth(0)
+            self._reply_preview.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
+            self._update_reply_preview_height()
             reply_layout.addWidget(reply_name)
-            reply_layout.addWidget(reply_preview)
+            reply_layout.addWidget(self._reply_preview)
             body.addWidget(reply_box)
 
         if msg.get("t") == "CHAT":
@@ -320,12 +333,21 @@ class ChatBubble(QFrame):
             self._text_widget.setWordWrap(True)
             self._text_widget.setStyleSheet("margin: 0px;")
             self._text_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
-            self._set_text_content(msg.get("text") or "", bool(msg.get("deleted")))
             self._text_widget.setContextMenuPolicy(Qt.CustomContextMenu)
             self._text_widget.customContextMenuRequested.connect(
                 lambda pos: self._show_context_menu(self._text_widget.mapToGlobal(pos))
             )
             body.addWidget(self._text_widget)
+
+            self._qr_label = QLabel()
+            self._qr_label.setObjectName("qrCode")
+            self._qr_label.setFixedSize(128, 128)
+            self._qr_label.setAlignment(Qt.AlignCenter)
+            self._qr_label.setScaledContents(False)
+            self._qr_label.hide()
+            body.addWidget(self._qr_label, alignment=Qt.AlignLeft)
+
+            self._set_text_content(msg.get("text") or "", bool(msg.get("deleted")))
         else:
             file_box = QFrame()
             file_box.setObjectName("fileCard")
@@ -384,9 +406,82 @@ class ChatBubble(QFrame):
         self._reaction_bar.hide()
         body.addWidget(self._reaction_bar)
 
-        layout.addWidget(self._avatar_label)
+        footer = QHBoxLayout()
+        footer.setContentsMargins(0, 0, 0, 0)
+        footer.addStretch(1)
+        footer.addWidget(self._time_label)
+        body.addLayout(footer)
+
         layout.addLayout(body, 1)
         self._update_time_label()
+
+    def resizeEvent(self, event):  # noqa: N802 - Qt naming
+        super().resizeEvent(event)
+        self._update_reply_preview_height()
+
+    def paintEvent(self, event):  # noqa: N802 - Qt naming
+        # Tail is painted here so it remains part of the bubble contour without extra widgets.
+        w = self.width()
+        h = self.height()
+        if w <= 0 or h <= 0:
+            return
+
+        colors = theme_mod.get_bubble_colors(self._theme_key)
+        bg = colors.get("bubble_self_bg") if self._is_self else colors.get("bubble_bg")
+        border = colors.get("bubble_self_border") if self._is_self else colors.get("bubble_border")
+        if self.property("flash") is True:
+            border = colors.get("neon_green", "#39ff14")
+
+        bw = float(self.BORDER_W)
+        tail_y = max(self.RADIUS + 6, h - self.TAIL_H - 10)
+        tail_mid = tail_y + (self.TAIL_H / 2.0)
+        tail_y2 = tail_y + self.TAIL_H
+
+        if self._is_self:
+            body_rect = QRectF(0, 0, w - self.TAIL_OUT, h)
+            base_x = w - self.TAIL_OUT
+            tip_x = w
+            dir_sign = 1.0
+        else:
+            body_rect = QRectF(self.TAIL_OUT, 0, w - self.TAIL_OUT, h)
+            base_x = self.TAIL_OUT
+            tip_x = 0
+            dir_sign = -1.0
+
+        body_rect = body_rect.adjusted(bw / 2, bw / 2, -bw / 2, -bw / 2)
+        body_path = QPainterPath()
+        body_path.addRoundedRect(body_rect, self.RADIUS, self.RADIUS)
+
+        ctrl_x = base_x + dir_sign * (self.TAIL_OUT * 0.45)
+        tail_path = QPainterPath()
+        tail_path.moveTo(base_x, tail_y)
+        tail_path.cubicTo(ctrl_x, tail_y + self.TAIL_H * 0.2, tip_x, tail_mid - self.TAIL_H * 0.2, tip_x, tail_mid)
+        tail_path.cubicTo(tip_x, tail_mid + self.TAIL_H * 0.2, ctrl_x, tail_y2 - self.TAIL_H * 0.2, base_x, tail_y2)
+        tail_path.closeSubpath()
+
+        shape = body_path.united(tail_path)
+
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        painter.fillPath(shape, QColor(bg))
+        pen = QPen(QColor(border), bw)
+        pen.setJoinStyle(Qt.RoundJoin)
+        pen.setCapStyle(Qt.RoundCap)
+        painter.setPen(pen)
+        painter.drawPath(shape)
+
+    def _update_reply_preview_height(self) -> None:
+        if not self._reply_preview:
+            return
+        width = self._reply_preview.width()
+        if width <= 0:
+            return
+        metrics = self._reply_preview.fontMetrics()
+        rect = metrics.boundingRect(0, 0, width, 10_000, Qt.TextWordWrap, self._reply_preview.text())
+        target = rect.height() + 2
+        if self._reply_preview.minimumHeight() != target:
+            self._reply_preview.setMinimumHeight(target)
+            self._reply_preview.updateGeometry()
 
     def contextMenuEvent(self, event):  # noqa: N802 - Qt naming
         self._show_context_menu(event.globalPos())
@@ -418,13 +513,7 @@ class ChatBubble(QFrame):
                 self.pin_requested.emit(self.msg)
 
     def refresh_avatar(self, avatar_path: str, avatar_sha: str) -> None:
-        pixmap = load_avatar_pixmap(
-            avatar_path,
-            self.msg.get("name") or "",
-            avatar_sha,
-            40,
-        )
-        self._avatar_label.setPixmap(pixmap)
+        return
 
     def set_download_status(self, text: str) -> None:
         if self._file_status is not None:
@@ -492,11 +581,14 @@ class ChatBubble(QFrame):
         if deleted:
             self._text_widget.setText("<i>Nachricht gelöscht</i>")
             self._text_widget.setObjectName("chatTextMuted")
+            self._update_qr_code("")
         else:
             self._text_widget.setText(render_markdown(text))
             self._text_widget.setObjectName("chatText")
+            self._update_qr_code(text)
         self._text_widget.style().unpolish(self._text_widget)
         self._text_widget.style().polish(self._text_widget)
+        self._text_widget.updateGeometry()
 
     def _update_time_label(self) -> None:
         if not self._time_label:
@@ -505,6 +597,28 @@ class ChatBubble(QFrame):
         if self.msg.get("edited"):
             label = f"{label} · bearbeitet"
         self._time_label.setText(label)
+
+    def _update_qr_code(self, text: str) -> None:
+        if not self._qr_label:
+            return
+        url = extract_first_url(text)
+        if not url:
+            self._qr_label.hide()
+            self._qr_label.clear()
+            self._qr_url = None
+            return
+        if url == self._qr_url and self._qr_label.pixmap() is not None:
+            self._qr_label.show()
+            return
+        pixmap = generate_qr_pixmap(url, 120)
+        if pixmap is None or pixmap.isNull():
+            self._qr_label.hide()
+            self._qr_label.clear()
+            self._qr_url = None
+            return
+        self._qr_url = url
+        self._qr_label.setPixmap(pixmap)
+        self._qr_label.show()
 
     def _copy_to_clipboard(self) -> None:
         text = ""
@@ -881,13 +995,20 @@ class MainWindow(QMainWindow):
         self._update_bubble_widths()
 
     def _update_bubble_widths(self) -> None:
-        max_width = max(340, int(self.chat_area.viewport().width() * 0.78))
-        min_width = max(220, int(self.chat_area.viewport().width() * 0.34))
-        if min_width > max_width:
-            min_width = max_width
-        for bubble in self._message_bubbles.values():
-            bubble.setMaximumWidth(max_width)
-            bubble.setMinimumWidth(min_width)
+        target = int(self.chat_area.viewport().width() * 0.62)
+        target = max(360, min(720, target))
+        for idx in range(self.chat_layout.count()):
+            item = self.chat_layout.itemAt(idx)
+            widget = item.widget() if item else None
+            if isinstance(widget, ChatBubble):
+                bubbles = [widget]
+            elif widget is not None:
+                bubbles = widget.findChildren(ChatBubble)
+            else:
+                bubbles = []
+            for bubble in bubbles:
+                bubble.setFixedWidth(target)
+                bubble.updateGeometry()
 
     def set_online_count(self, count: int) -> None:
         self.online_label.setText(f"Online im LAN: {count}")
@@ -937,13 +1058,18 @@ class MainWindow(QMainWindow):
         self.user_list_layout.addStretch(1)
 
     def add_message(self, msg: dict, sender_ip: str, is_self: bool) -> None:
-        avatar = load_avatar_pixmap(
+        avatar_pix = load_avatar_pixmap(
             self._store.config.avatar_path if is_self else "",
             msg.get("name") or "",
             msg.get("avatar_sha256") or "",
             40,
         )
-        bubble = ChatBubble(msg, avatar, is_self)
+        avatar_lbl = QLabel()
+        avatar_lbl.setFixedSize(40, 40)
+        avatar_lbl.setPixmap(avatar_pix)
+        avatar_lbl.setScaledContents(True)
+
+        bubble = ChatBubble(msg, is_self, self._store.config.theme)
         bubble.download_requested.connect(lambda m=msg: self._download_file(m, sender_ip))
         bubble.reply_requested.connect(lambda m=msg: self._set_reply(m))
         bubble.reaction_requested.connect(lambda m, e: self._send_reaction(m, e))
@@ -960,8 +1086,19 @@ class MainWindow(QMainWindow):
         if file_id:
             self._file_bubbles[file_id] = bubble
 
-        alignment = Qt.AlignRight if is_self else Qt.AlignLeft
-        self.chat_layout.addWidget(bubble, alignment=alignment)
+        row = QWidget()
+        row_layout = QHBoxLayout(row)
+        row_layout.setContentsMargins(0, 0, 0, 0)
+        row_layout.setSpacing(10)
+        if is_self:
+            row_layout.addStretch(1)
+            row_layout.addWidget(bubble, 0, Qt.AlignBottom)
+            row_layout.addWidget(avatar_lbl, 0, Qt.AlignBottom)
+        else:
+            row_layout.addWidget(avatar_lbl, 0, Qt.AlignBottom)
+            row_layout.addWidget(bubble, 0, Qt.AlignBottom)
+            row_layout.addStretch(1)
+        self.chat_layout.addWidget(row)
         if self._pinned_message and msg.get("message_id") == self._pinned_message.get("target_id"):
             bubble.set_pinned(True)
         if msg.get("t") == "FILE":
@@ -1016,12 +1153,6 @@ class MainWindow(QMainWindow):
         return dict(self._pinned_message)
 
     def refresh_avatar(self, sender_id: str, avatar_sha: str) -> None:
-        for idx in range(self.chat_layout.count()):
-            item = self.chat_layout.itemAt(idx)
-            widget = item.widget()
-            if isinstance(widget, ChatBubble):
-                if widget.msg.get("sender_id") == sender_id and widget.msg.get("avatar_sha256") == avatar_sha:
-                    widget.refresh_avatar("", avatar_sha)
         item = self._user_items.get(sender_id)
         if item:
             name = item._name_label.text().replace(" (Du)", "")
@@ -1234,6 +1365,10 @@ class MainWindow(QMainWindow):
             widget = item.widget()
             if isinstance(widget, ChatBubble):
                 widget.setVisible(widget.matches_filter(query))
+            elif isinstance(widget, QWidget):
+                bubble = widget.findChild(ChatBubble)
+                if bubble:
+                    widget.setVisible(bubble.matches_filter(query))
 
     def _scroll_to_bottom(self, force: bool = False) -> None:
         if not force and not self._stick_to_bottom:

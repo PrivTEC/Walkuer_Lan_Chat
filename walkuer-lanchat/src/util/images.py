@@ -8,9 +8,16 @@ from PySide6.QtGui import QBrush, QColor, QFont, QIcon, QPainter, QPainterPath, 
 
 try:
     from PIL import Image, ImageDraw
+    from PIL.ImageQt import ImageQt
 except Exception:  # pragma: no cover - pillow missing
     Image = None
     ImageDraw = None
+    ImageQt = None
+
+try:
+    import qrcode
+except Exception:  # pragma: no cover - qrcode missing
+    qrcode = None
 
 from util.paths import avatar_cache_path
 
@@ -154,3 +161,21 @@ def write_app_icon(path: str) -> None:
         sizes=[(s, s) for s in sizes],
         append_images=images[1:],
     )
+
+
+def generate_qr_pixmap(data: str, size: int = 120) -> QPixmap | None:
+    if not data or qrcode is None or Image is None or ImageQt is None:
+        return None
+    qr = qrcode.QRCode(
+        version=None,
+        error_correction=qrcode.constants.ERROR_CORRECT_M,
+        box_size=4,
+        border=2,
+    )
+    qr.add_data(data)
+    qr.make(fit=True)
+    img = qr.make_image(fill_color="black", back_color="white").convert("RGB")
+    if size:
+        img = img.resize((size, size), resample=Image.NEAREST)
+    qimage = ImageQt(img)
+    return QPixmap.fromImage(qimage)

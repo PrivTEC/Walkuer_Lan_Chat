@@ -101,22 +101,16 @@ QFrame#attachmentsPanel {{
     border-radius: 10px;
 }}
 QFrame#chatBubble {{
-    background: {BUBBLE_BG};
-    border: 1px solid {BUBBLE_BORDER};
-    border-radius: 12px;
-    padding: 10px;
-}}
-QFrame#chatBubble[flash="true"] {{
-    border: 1px solid {NEON_GREEN};
+    background: transparent;
+    border: none;
+    padding: 0px;
+    border-radius: 0px;
 }}
 QFrame#chatBubbleSelf {{
-    background: {BUBBLE_SELF_BG};
-    border-radius: 12px;
-    padding: 10px;
-    border: 1px solid {BUBBLE_SELF_BORDER};
-}}
-QFrame#chatBubbleSelf[flash="true"] {{
-    border: 1px solid {NEON_GREEN};
+    background: transparent;
+    border: none;
+    padding: 0px;
+    border-radius: 0px;
 }}
 QLabel#nameLabel {{
     color: {NEON_GREEN};
@@ -133,7 +127,29 @@ QLabel#chatTextMuted {{
     color: {TEXT_MUTED};
 }}
 QLabel#chatText a {{
-    color: {NEON_GREEN};
+    color: #7CFF5B;
+    text-decoration: underline;
+    font-weight: 600;
+}}
+QLabel#replyPreview a {{
+    color: #7CFF5B;
+    text-decoration: underline;
+    font-weight: 600;
+}}
+QTextBrowser#chatText {{
+    background: transparent;
+    border: none;
+    padding: 0px;
+    color: {TEXT};
+}}
+QTextBrowser#chatTextMuted {{
+    background: transparent;
+    border: none;
+    padding: 0px;
+    color: {TEXT_MUTED};
+}}
+QTextBrowser#chatText a {{
+    color: #7CFF5B;
     text-decoration: underline;
     font-weight: 600;
 }}
@@ -270,6 +286,11 @@ QToolButton#replyButton:hover, QToolButton#reactionButton:hover {{
 }}
 QLabel#imagePreview {{
     background: {INPUT_BG};
+    border: 1px solid {BORDER};
+    border-radius: 8px;
+}}
+QLabel#qrCode {{
+    background: #FFFFFF;
     border: 1px solid {BORDER};
     border-radius: 8px;
 }}
@@ -518,6 +539,42 @@ THEMES = {
     ),
 }
 THEMES.setdefault("Pink Pupa", THEMES[PINK_PUPA_THEME])
+
+THEME_COLORS = {
+    DEFAULT_THEME: {
+        "bubble_bg": "#0E1411",
+        "bubble_border": "#1B2B22",
+        "bubble_self_bg": "#0E1A12",
+        "bubble_self_border": "#2C5C38",
+        "neon_green": "#39FF14",
+    },
+    PINK_PUPA_THEME: {
+        "bubble_bg": "#16101B",
+        "bubble_border": "#2A2332",
+        "bubble_self_bg": "#1C1224",
+        "bubble_self_border": "#5C2E64",
+        "neon_green": "#FF6FB8",
+    },
+    MIDNIGHT_BLUE_THEME: {
+        "bubble_bg": "#101722",
+        "bubble_border": "#1F2A3D",
+        "bubble_self_bg": "#132032",
+        "bubble_self_border": "#3B6EA5",
+        "neon_green": "#49C8FF",
+    },
+    MONO_MINIMAL_THEME: {
+        "bubble_bg": "#121212",
+        "bubble_border": "#2A2A2A",
+        "bubble_self_bg": "#161616",
+        "bubble_self_border": "#3A3A3A",
+        "neon_green": "#CFCFCF",
+    },
+}
+THEME_COLORS.setdefault("Pink Pupa", THEME_COLORS[PINK_PUPA_THEME])
+
+
+def get_bubble_colors(theme_key: str) -> dict[str, str]:
+    return dict(THEME_COLORS.get(theme_key, THEME_COLORS[DEFAULT_THEME]))
 
 THEME_CHOICES = [
     DEFAULT_THEME,
