@@ -24,6 +24,10 @@ class AppConfig:
     api_token: str
     expert_mode: bool
     first_run_complete: bool
+    chat_bg_mode: str
+    chat_bg_color: str
+    chat_bg_opacity: int
+    chat_bg_image_path: str
 
 
 class ConfigStore:
@@ -45,6 +49,10 @@ class ConfigStore:
             api_token=str(uuid.uuid4()),
             expert_mode=False,
             first_run_complete=False,
+            chat_bg_mode="off",
+            chat_bg_color="#000000",
+            chat_bg_opacity=12,
+            chat_bg_image_path="",
         )
 
     def load(self) -> AppConfig:
@@ -64,6 +72,10 @@ class ConfigStore:
                     api_token=raw.get("api_token") or str(uuid.uuid4()),
                     expert_mode=bool(raw.get("expert_mode", False)),
                     first_run_complete=bool(raw.get("first_run_complete", False)),
+                    chat_bg_mode=raw.get("chat_bg_mode") or "off",
+                    chat_bg_color=raw.get("chat_bg_color") or "#000000",
+                    chat_bg_opacity=int(raw.get("chat_bg_opacity", 12)),
+                    chat_bg_image_path=raw.get("chat_bg_image_path") or "",
                 )
             except Exception:
                 self.config = self._default_config()

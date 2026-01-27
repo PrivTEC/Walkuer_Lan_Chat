@@ -43,7 +43,12 @@ def _initials(name: str) -> str:
     return (parts[0][:1] + parts[1][:1]).upper()
 
 
-def round_pixmap(pixmap: QPixmap, size: int) -> QPixmap:
+def round_pixmap(
+    pixmap: QPixmap,
+    size: int,
+    border_color: QColor | None = None,
+    border_width: int = 0,
+) -> QPixmap:
     scaled = pixmap.scaled(size, size, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
     result = QPixmap(size, size)
     result.fill(Qt.transparent)
@@ -53,11 +58,26 @@ def round_pixmap(pixmap: QPixmap, size: int) -> QPixmap:
     path.addEllipse(QRectF(0, 0, size, size))
     painter.setClipPath(path)
     painter.drawPixmap(0, 0, scaled)
+    if border_color and border_width > 0:
+        painter.setClipping(False)
+        pen = painter.pen()
+        pen.setColor(border_color)
+        pen.setWidth(border_width)
+        painter.setPen(pen)
+        painter.setBrush(Qt.NoBrush)
+        inset = border_width / 2
+        painter.drawEllipse(QRectF(inset, inset, size - border_width, size - border_width))
     painter.end()
     return result
 
 
-def generate_avatar_pixmap(size: int, name: str, seed: str) -> QPixmap:
+def generate_avatar_pixmap(
+    size: int,
+    name: str,
+    seed: str,
+    border_color: QColor | None = None,
+    border_width: int = 0,
+) -> QPixmap:
     pixmap = QPixmap(size, size)
     pixmap.fill(Qt.transparent)
     painter = QPainter(pixmap)
@@ -72,25 +92,40 @@ def generate_avatar_pixmap(size: int, name: str, seed: str) -> QPixmap:
     painter.setFont(font)
     painter.setPen(Qt.black)
     painter.drawText(pixmap.rect(), Qt.AlignCenter, text)
+    if border_color and border_width > 0:
+        pen = painter.pen()
+        pen.setColor(border_color)
+        pen.setWidth(border_width)
+        painter.setPen(pen)
+        painter.setBrush(Qt.NoBrush)
+        inset = border_width / 2
+        painter.drawEllipse(QRectF(inset, inset, size - border_width, size - border_width))
     painter.end()
     return pixmap
 
 
-def load_avatar_pixmap(avatar_path: str, name: str, avatar_sha: str, size: int) -> QPixmap:
+def load_avatar_pixmap(
+    avatar_path: str,
+    name: str,
+    avatar_sha: str,
+    size: int,
+    border_color: QColor | None = None,
+    border_width: int = 0,
+) -> QPixmap:
     if avatar_path:
         path = Path(avatar_path)
         if path.exists():
             pixmap = QPixmap(str(path))
             if not pixmap.isNull():
-                return round_pixmap(pixmap, size)
+                return round_pixmap(pixmap, size, border_color, border_width)
     if avatar_sha:
         cached = avatar_cache_path(avatar_sha)
         if cached.exists():
             pixmap = QPixmap(str(cached))
             if not pixmap.isNull():
-                return round_pixmap(pixmap, size)
+                return round_pixmap(pixmap, size, border_color, border_width)
     seed = avatar_sha or name or "walkuer"
-    return generate_avatar_pixmap(size, name, seed)
+    return generate_avatar_pixmap(size, name, seed, border_color, border_width)
 
 
 def app_icon(size: int = 256) -> QIcon:

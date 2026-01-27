@@ -86,7 +86,7 @@ QLabel#onlineLabel {{
     font-size: 9pt;
 }}
 QFrame#chatCanvas {{
-    background: {SURFACE};
+    background: transparent;
     border: 1px solid {BORDER};
     border-radius: 12px;
 }}
@@ -542,32 +542,40 @@ THEMES.setdefault("Pink Pupa", THEMES[PINK_PUPA_THEME])
 
 THEME_COLORS = {
     DEFAULT_THEME: {
+        "chat_surface": "#0F1412",
         "bubble_bg": "#0E1411",
         "bubble_border": "#1B2B22",
         "bubble_self_bg": "#0E1A12",
         "bubble_self_border": "#2C5C38",
         "neon_green": "#39FF14",
+        "avatar_border": "#1B2B22",
     },
     PINK_PUPA_THEME: {
+        "chat_surface": "#141015",
         "bubble_bg": "#16101B",
         "bubble_border": "#2A2332",
         "bubble_self_bg": "#1C1224",
         "bubble_self_border": "#5C2E64",
         "neon_green": "#FF6FB8",
+        "avatar_border": "#2A2332",
     },
     MIDNIGHT_BLUE_THEME: {
+        "chat_surface": "#111622",
         "bubble_bg": "#101722",
         "bubble_border": "#1F2A3D",
         "bubble_self_bg": "#132032",
         "bubble_self_border": "#3B6EA5",
         "neon_green": "#49C8FF",
+        "avatar_border": "#1F2A3D",
     },
     MONO_MINIMAL_THEME: {
+        "chat_surface": "#111111",
         "bubble_bg": "#121212",
         "bubble_border": "#2A2A2A",
         "bubble_self_bg": "#161616",
         "bubble_self_border": "#3A3A3A",
         "neon_green": "#CFCFCF",
+        "avatar_border": "#2A2A2A",
     },
 }
 THEME_COLORS.setdefault("Pink Pupa", THEME_COLORS[PINK_PUPA_THEME])

@@ -14,6 +14,8 @@ from PySide6.QtWidgets import (
     QDialog,
     QFrame,
     QGraphicsDropShadowEffect,
+    QGraphicsOpacityEffect,
+    QGridLayout,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -233,6 +235,7 @@ class ChatBubble(QFrame):
     TAIL_H = 18
     RADIUS = 12
     BORDER_W = 1
+    REPLY_GAP_PX = 8
 
     reply_requested = Signal(dict)
     reaction_requested = Signal(dict, str)
@@ -323,6 +326,7 @@ class ChatBubble(QFrame):
             reply_layout.addWidget(reply_name)
             reply_layout.addWidget(self._reply_preview)
             body.addWidget(reply_box)
+            body.addSpacing(self.REPLY_GAP_PX)
 
         if msg.get("t") == "CHAT":
             self._text_widget = QLabel()
@@ -853,6 +857,8 @@ class MainWindow(QMainWindow):
         self.chat_area.setWidgetResizable(True)
         self.chat_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.chat_area.setFrameShape(QFrame.NoFrame)
+        self.chat_area.setStyleSheet("background: transparent;")
+        self.chat_area.viewport().setAutoFillBackground(False)
 
         self.chat_container = QWidget()
         self.chat_container.setObjectName("chatCanvas")
@@ -864,6 +870,27 @@ class MainWindow(QMainWindow):
         scroll_bar = self.chat_area.verticalScrollBar()
         scroll_bar.valueChanged.connect(self._on_scroll_changed)
         scroll_bar.rangeChanged.connect(self._on_scroll_range_changed)
+
+        self.chat_stack = QFrame()
+        self.chat_stack.setObjectName("chatStack")
+        chat_stack_layout = QGridLayout(self.chat_stack)
+        chat_stack_layout.setContentsMargins(0, 0, 0, 0)
+        chat_stack_layout.setSpacing(0)
+
+        self._chat_bg_color = QFrame()
+        self._chat_bg_color.setObjectName("chatBgColor")
+        self._chat_bg_image = QLabel()
+        self._chat_bg_image.setAlignment(Qt.AlignCenter)
+        self._chat_bg_image.setScaledContents(False)
+        self._chat_bg_image_fx = QGraphicsOpacityEffect(self._chat_bg_image)
+        self._chat_bg_image.setGraphicsEffect(self._chat_bg_image_fx)
+        self._chat_bg_pixmap: QPixmap | None = None
+        self._chat_bg_path: str = ""
+
+        chat_stack_layout.addWidget(self._chat_bg_color, 0, 0)
+        chat_stack_layout.addWidget(self._chat_bg_image, 0, 0)
+        chat_stack_layout.addWidget(self.chat_area, 0, 0)
+        self.chat_area.raise_()
 
         self.pinned_bar = QFrame()
         self.pinned_bar.setObjectName("pinnedBar")
@@ -965,7 +992,7 @@ class MainWindow(QMainWindow):
         composer_layout.addWidget(send_btn)
 
         chat_layout.addWidget(self.pinned_bar)
-        chat_layout.addWidget(self.chat_area, 1)
+        chat_layout.addWidget(self.chat_stack, 1)
         chat_layout.addWidget(self.attachments_panel)
         chat_layout.addWidget(self.edit_bar)
         chat_layout.addWidget(self.reply_bar)
@@ -989,10 +1016,12 @@ class MainWindow(QMainWindow):
 
         self._render_user_list()
         self._update_maximize_icon()
+        self._apply_chat_background_from_config()
 
     def resizeEvent(self, event):  # noqa: N802 - Qt naming
         super().resizeEvent(event)
         self._update_bubble_widths()
+        self._update_chat_background_geometry()
 
     def _update_bubble_widths(self) -> None:
         target = int(self.chat_area.viewport().width() * 0.62)
@@ -1009,6 +1038,55 @@ class MainWindow(QMainWindow):
             for bubble in bubbles:
                 bubble.setFixedWidth(target)
                 bubble.updateGeometry()
+
+    def _apply_chat_background_from_config(self) -> None:
+        mode = self._store.config.chat_bg_mode or "off"
+        opacity = int(self._store.config.chat_bg_opacity or 0)
+        opacity = max(0, min(100, opacity))
+        colors = theme_mod.get_bubble_colors(self._store.config.theme)
+        surface = colors.get("chat_surface", "#0F1412")
+
+        if mode == "color":
+            color = QColor(self._store.config.chat_bg_color or surface)
+            if not color.isValid():
+                color = QColor(surface)
+            alpha = int(255 * (opacity / 100.0))
+            self._chat_bg_color.setStyleSheet(
+                f"background-color: rgba({color.red()}, {color.green()}, {color.blue()}, {alpha});"
+            )
+            self._chat_bg_color.show()
+            self._chat_bg_image.hide()
+        elif mode == "image":
+            path = self._store.config.chat_bg_image_path or ""
+            pixmap = QPixmap(path) if path else QPixmap()
+            if not pixmap.isNull():
+                self._chat_bg_path = path
+                self._chat_bg_pixmap = pixmap
+                self._chat_bg_image_fx.setOpacity(opacity / 100.0)
+                self._chat_bg_image.show()
+                self._chat_bg_color.hide()
+                self._update_chat_background_geometry()
+            else:
+                self._chat_bg_image.hide()
+                self._chat_bg_color.setStyleSheet(f"background-color: {surface};")
+                self._chat_bg_color.show()
+        else:
+            self._chat_bg_image.hide()
+            self._chat_bg_color.setStyleSheet(f"background-color: {surface};")
+            self._chat_bg_color.show()
+
+    def _update_chat_background_geometry(self) -> None:
+        if not self._chat_bg_image.isVisible() or self._chat_bg_pixmap is None:
+            return
+        size = self.chat_stack.size()
+        if size.width() <= 0 or size.height() <= 0:
+            return
+        scaled = self._chat_bg_pixmap.scaled(
+            size,
+            Qt.KeepAspectRatioByExpanding,
+            Qt.SmoothTransformation,
+        )
+        self._chat_bg_image.setPixmap(scaled)
 
     def set_online_count(self, count: int) -> None:
         self.online_label.setText(f"Online im LAN: {count}")
@@ -1058,16 +1136,26 @@ class MainWindow(QMainWindow):
         self.user_list_layout.addStretch(1)
 
     def add_message(self, msg: dict, sender_ip: str, is_self: bool) -> None:
+        avatar_size = 46
+        colors = theme_mod.get_bubble_colors(self._store.config.theme)
+        avatar_border = QColor(colors.get("avatar_border", colors.get("bubble_border", "#1B2B22")))
         avatar_pix = load_avatar_pixmap(
             self._store.config.avatar_path if is_self else "",
             msg.get("name") or "",
             msg.get("avatar_sha256") or "",
-            40,
+            avatar_size,
+            avatar_border,
+            1,
         )
         avatar_lbl = QLabel()
-        avatar_lbl.setFixedSize(40, 40)
+        avatar_lbl.setObjectName("chatAvatar")
+        avatar_lbl.setProperty("sender_id", msg.get("sender_id") or "")
+        avatar_lbl.setProperty("sender_name", msg.get("name") or "")
+        avatar_lbl.setProperty("is_self", bool(is_self))
+        avatar_lbl.setFixedSize(avatar_size, avatar_size)
         avatar_lbl.setPixmap(avatar_pix)
         avatar_lbl.setScaledContents(True)
+        avatar_lbl.setStyleSheet("background: transparent;")
 
         bubble = ChatBubble(msg, is_self, self._store.config.theme)
         bubble.download_requested.connect(lambda m=msg: self._download_file(m, sender_ip))
@@ -1153,6 +1241,22 @@ class MainWindow(QMainWindow):
         return dict(self._pinned_message)
 
     def refresh_avatar(self, sender_id: str, avatar_sha: str) -> None:
+        colors = theme_mod.get_bubble_colors(self._store.config.theme)
+        avatar_border = QColor(colors.get("avatar_border", colors.get("bubble_border", "#1B2B22")))
+        for idx in range(self.chat_layout.count()):
+            item = self.chat_layout.itemAt(idx)
+            row = item.widget() if item else None
+            if not isinstance(row, QWidget):
+                continue
+            for avatar_lbl in row.findChildren(QLabel, "chatAvatar"):
+                if avatar_lbl.property("sender_id") != sender_id:
+                    continue
+                name = avatar_lbl.property("sender_name") or ""
+                is_self = bool(avatar_lbl.property("is_self"))
+                avatar_path = self._store.config.avatar_path if is_self else ""
+                size = avatar_lbl.width() or 46
+                pixmap = load_avatar_pixmap(avatar_path, name, avatar_sha, size, avatar_border, 1)
+                avatar_lbl.setPixmap(pixmap)
         item = self._user_items.get(sender_id)
         if item:
             name = item._name_label.text().replace(" (Du)", "")

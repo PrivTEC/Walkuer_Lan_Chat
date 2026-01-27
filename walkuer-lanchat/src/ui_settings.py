@@ -11,7 +11,9 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QPushButton,
+    QSlider,
     QVBoxLayout,
+    QColorDialog,
 )
 
 from config_store import ConfigStore
@@ -67,6 +69,34 @@ class SettingsDialog(QDialog):
             index = 0
         self.theme_select.setCurrentIndex(index)
 
+        chat_bg_label = QLabel("Chat Hintergrund")
+        self.chat_bg_mode = QComboBox()
+        self._bg_mode_values = ["off", "color", "image"]
+        self.chat_bg_mode.addItems(["Aus", "Farbe", "Bild"])
+        current_mode = store.config.chat_bg_mode or "off"
+        if current_mode in self._bg_mode_values:
+            self.chat_bg_mode.setCurrentIndex(self._bg_mode_values.index(current_mode))
+        else:
+            self.chat_bg_mode.setCurrentIndex(0)
+
+        self.chat_bg_color = store.config.chat_bg_color or "#000000"
+        self.chat_bg_color_btn = QPushButton()
+        self.chat_bg_color_btn.clicked.connect(self._choose_chat_bg_color)
+        self._update_chat_bg_color_button()
+
+        self.chat_bg_image_path = QLineEdit(store.config.chat_bg_image_path or "")
+        self.chat_bg_image_path.setReadOnly(True)
+        self.chat_bg_image_btn = QPushButton("Bild wählen...")
+        self.chat_bg_image_btn.clicked.connect(self._choose_chat_bg_image)
+
+        self.chat_bg_opacity = QSlider(Qt.Horizontal)
+        self.chat_bg_opacity.setRange(0, 100)
+        self.chat_bg_opacity.setValue(int(store.config.chat_bg_opacity or 12))
+        self.chat_bg_opacity_label = QLabel(f"Fade: {self.chat_bg_opacity.value()}%")
+        self.chat_bg_opacity.valueChanged.connect(
+            lambda v: self.chat_bg_opacity_label.setText(f"Fade: {v}%")
+        )
+
         self.sound_toggle = QCheckBox("Sound bei neuen Nachrichten")
         self.sound_toggle.setChecked(store.config.sound_enabled)
 
@@ -115,6 +145,18 @@ class SettingsDialog(QDialog):
         layout.addLayout(avatar_buttons)
         layout.addWidget(theme_label)
         layout.addWidget(self.theme_select)
+        layout.addWidget(chat_bg_label)
+        layout.addWidget(self.chat_bg_mode)
+
+        layout.addWidget(QLabel("Farbe"))
+        layout.addWidget(self.chat_bg_color_btn)
+
+        layout.addWidget(QLabel("Bild"))
+        layout.addWidget(self.chat_bg_image_path)
+        layout.addWidget(self.chat_bg_image_btn)
+
+        layout.addWidget(self.chat_bg_opacity_label)
+        layout.addWidget(self.chat_bg_opacity)
         layout.addWidget(self.sound_toggle)
         layout.addWidget(self.tray_toggle)
         layout.addWidget(self.expert_toggle)
@@ -128,6 +170,8 @@ class SettingsDialog(QDialog):
             layout.addWidget(cancel_btn, alignment=Qt.AlignRight)
 
         self.expert_toggle.toggled.connect(self._update_expert_visibility)
+        self.chat_bg_mode.currentIndexChanged.connect(self._update_chat_bg_controls)
+        self._update_chat_bg_controls()
         self._update_expert_visibility()
 
     def _refresh_preview(self) -> None:
@@ -160,6 +204,36 @@ class SettingsDialog(QDialog):
         new_token = self._store.regenerate_api_token()
         self.api_token_value.setText(new_token)
 
+    def _update_chat_bg_color_button(self) -> None:
+        self.chat_bg_color_btn.setText(self.chat_bg_color)
+        self.chat_bg_color_btn.setStyleSheet(f"background: {self.chat_bg_color};")
+
+    def _choose_chat_bg_color(self) -> None:
+        color = QColorDialog.getColor()
+        if color.isValid():
+            self.chat_bg_color = color.name()
+            self._update_chat_bg_color_button()
+
+    def _choose_chat_bg_image(self) -> None:
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Chat-Hintergrund wählen",
+            "",
+            "Images (*.png *.jpg *.jpeg *.bmp *.webp)"
+        )
+        if file_path:
+            self.chat_bg_image_path.setText(file_path)
+
+    def _update_chat_bg_controls(self) -> None:
+        mode = self._bg_mode_values[self.chat_bg_mode.currentIndex()]
+        is_color = mode == "color"
+        is_image = mode == "image"
+        self.chat_bg_color_btn.setEnabled(is_color)
+        self.chat_bg_image_btn.setEnabled(is_image)
+        self.chat_bg_image_path.setEnabled(is_image)
+        self.chat_bg_opacity.setEnabled(is_color or is_image)
+        self.chat_bg_opacity_label.setEnabled(is_color or is_image)
+
     def _save(self) -> None:
         name = self.name_input.text().strip() or "User"
         self._store.config.user_name = name
@@ -169,6 +243,10 @@ class SettingsDialog(QDialog):
         self._store.config.api_enabled = self.api_toggle.isChecked()
         self._store.config.expert_mode = self.expert_toggle.isChecked()
         self._store.config.first_run_complete = True
+        self._store.config.chat_bg_mode = self._bg_mode_values[self.chat_bg_mode.currentIndex()]
+        self._store.config.chat_bg_color = self.chat_bg_color
+        self._store.config.chat_bg_opacity = int(self.chat_bg_opacity.value())
+        self._store.config.chat_bg_image_path = self.chat_bg_image_path.text().strip()
 
         if self._pending_avatar is not None:
             if self._pending_avatar == "":
@@ -177,6 +255,9 @@ class SettingsDialog(QDialog):
                 self._store.set_avatar_from_path(self._pending_avatar)
 
         self._store.save()
+        parent = self.parent()
+        if parent is not None and hasattr(parent, "_apply_chat_background_from_config"):
+            parent._apply_chat_background_from_config()
         self.saved.emit()
         self.accept()
 
