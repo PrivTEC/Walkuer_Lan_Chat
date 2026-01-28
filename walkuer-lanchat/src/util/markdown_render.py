@@ -133,10 +133,11 @@ def render_markdown(text: str) -> str:
     try:
         text = _auto_link(text)
         text = _soft_wrap_long_tokens(text)
-        return markdown.markdown(
+        rendered = markdown.markdown(
             text,
             extensions=["sane_lists", "nl2br"],
             output_format="html5",
         )
+        return rendered.replace("\u200b", "<wbr>")
     except Exception:
         return "<pre>" + html.escape(text) + "</pre>"

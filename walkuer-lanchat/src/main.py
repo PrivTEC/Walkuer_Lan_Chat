@@ -179,6 +179,21 @@ def main() -> int:
     def handle_send_text(payload: dict) -> None:
         text = payload.get("text") or ""
         meta = {k: v for k, v in payload.items() if k != "text"}
+        link_preview = meta.get("link_preview")
+        if isinstance(link_preview, dict):
+            thumb_path = link_preview.pop("thumb_path", "") or ""
+            thumb_file_id = link_preview.get("thumb_file_id") or ""
+            if thumb_path and not thumb_file_id:
+                import hashlib
+
+                url_seed = link_preview.get("url") or ""
+                digest = hashlib.sha1(url_seed.encode("utf-8")).hexdigest()
+                thumb_file_id = f"lp_{digest[:12]}"
+                link_preview["thumb_file_id"] = thumb_file_id
+            if thumb_path and thumb_file_id:
+                thumb_url = network.host_local_file(thumb_file_id, thumb_path)
+                if thumb_url:
+                    link_preview["thumb_url"] = thumb_url
         if meta:
             msg = network.send_chat_with_meta(text, meta)
         else:

@@ -1,14 +1,21 @@
 from __future__ import annotations
 
+import gzip
+import hashlib
+import html
+import io
+import json
 import os
 import time
 import urllib.parse
 import urllib.request
+import zlib
+from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import Qt, QThread, QTimer, Signal, QSize, QEvent, QPoint, QRectF
-from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen, QPixmap
+from PySide6.QtCore import Qt, QThread, QTimer, Signal, QSize, QEvent, QPoint, QRectF, QUrl
+from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen, QPixmap, QDesktopServices
 from PySide6.QtWidgets import (
     QApplication,
     QDialog,
@@ -40,7 +47,7 @@ from config_store import ConfigStore
 from net import protocol
 from util.images import load_avatar_pixmap, generate_qr_pixmap
 from util.markdown_render import render_markdown, extract_first_url
-from util.paths import attachment_cache_path, downloads_dir
+from util.paths import attachment_cache_path, downloads_dir, logs_dir
 from util.timefmt import fmt_time, fmt_time_seconds
 
 
@@ -113,7 +120,270 @@ class ImageFetchWorker(QThread):
             self.failed.emit(self._dest_path)
 
 
+class LinkThumbFetchWorker(QThread):
+    finished = Signal(str, str)
+    failed = Signal(str, str)
+
+    def __init__(self, url: str, dest_path: str, file_id: str, source_url: str) -> None:
+        super().__init__()
+        self._url = url
+        self._dest_path = dest_path
+        self._file_id = file_id
+        self._source_url = source_url
+
+    def run(self) -> None:
+        try:
+            req = urllib.request.Request(self._url, headers=_LINKPREVIEW_IMAGE_HEADERS)
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                content_type = (resp.headers.get("Content-Type") or "").lower()
+                if "text/html" in content_type:
+                    raise RuntimeError("unexpected html response")
+                max_bytes = 3 * 1024 * 1024
+                data = bytearray()
+                while len(data) < max_bytes:
+                    chunk = resp.read(1024 * 64)
+                    if not chunk:
+                        break
+                    data.extend(chunk)
+                    if len(data) >= max_bytes:
+                        raise RuntimeError("image too large")
+            if not data:
+                raise RuntimeError("empty image response")
+            Path(self._dest_path).parent.mkdir(parents=True, exist_ok=True)
+            with open(self._dest_path, "wb") as f:
+                f.write(data)
+            _write_thumb_src(self._file_id, self._source_url)
+            self.finished.emit(self._dest_path, self._source_url)
+        except Exception as exc:
+            self.failed.emit(self._dest_path, str(exc))
+
+
+class _LinkPreviewHTMLParser(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__()
+        self.meta: dict[str, str] = {}
+        self.title_parts: list[str] = []
+        self.base_href = ""
+        self.link_canonical = ""
+        self.link_image_src = ""
+        self.link_icon = ""
+        self.link_apple_icon = ""
+        self._in_title = False
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        tag = (tag or "").lower()
+        attrs_map = {str(k).lower(): v for k, v in attrs if k}
+        if tag == "meta":
+            key = (
+                attrs_map.get("property")
+                or attrs_map.get("name")
+                or attrs_map.get("itemprop")
+                or ""
+            )
+            key = key.lower()
+            content = (attrs_map.get("content") or attrs_map.get("href") or "").strip()
+            if key and content and key not in self.meta:
+                self.meta[key] = html.unescape(content)
+        elif tag == "link":
+            rel = (attrs_map.get("rel") or "").lower()
+            href = (attrs_map.get("href") or attrs_map.get("content") or "").strip()
+            if not href:
+                return
+            if "canonical" in rel and not self.link_canonical:
+                self.link_canonical = html.unescape(href)
+            if "image_src" in rel and not self.link_image_src:
+                self.link_image_src = html.unescape(href)
+            if "apple-touch-icon" in rel and not self.link_apple_icon:
+                self.link_apple_icon = html.unescape(href)
+            if "icon" in rel and not self.link_icon:
+                self.link_icon = html.unescape(href)
+        elif tag == "title":
+            self._in_title = True
+        elif tag == "base":
+            href = (attrs_map.get("href") or "").strip()
+            if href and not self.base_href:
+                self.base_href = href
+
+    def handle_endtag(self, tag: str) -> None:
+        if (tag or "").lower() == "title":
+            self._in_title = False
+
+    def handle_data(self, data: str) -> None:
+        if self._in_title and data:
+            self.title_parts.append(data)
+
+    @property
+    def title(self) -> str:
+        return html.unescape("".join(self.title_parts)).strip()
+
+
+class LinkPreviewWorker(QThread):
+    finished = Signal(str, dict)
+    failed = Signal(str, str)
+
+    def __init__(self, url: str) -> None:
+        super().__init__()
+        self._url = url
+
+    def run(self) -> None:
+        try:
+            target_url = _normalize_preview_url(self._url)
+            def fetch_html(url: str, headers: dict[str, str]) -> tuple[str, str, str]:
+                req = urllib.request.Request(url, headers=headers)
+                with urllib.request.urlopen(req, timeout=10) as resp:
+                    max_bytes = 512 * 1024
+                    data = bytearray()
+                    while len(data) < max_bytes:
+                        chunk = resp.read(1024 * 64)
+                        if not chunk:
+                            break
+                        data.extend(chunk)
+                        if len(data) >= max_bytes:
+                            break
+                    final = resp.geturl() or url
+                    charset = resp.headers.get_content_charset() or "utf-8"
+                    enc = (resp.headers.get("Content-Encoding") or "").lower()
+                raw = bytes(data)
+                if enc:
+                    try:
+                        if "gzip" in enc:
+                            raw = gzip.decompress(raw)
+                        elif "deflate" in enc:
+                            try:
+                                raw = zlib.decompress(raw)
+                            except zlib.error:
+                                raw = zlib.decompress(raw, -zlib.MAX_WBITS)
+                        elif "br" in enc:
+                            raise RuntimeError("brotli unsupported")
+                    except Exception as exc:
+                        _log_link_preview(f"linkpreview_fail url={url} reason=decompress:{exc}")
+                        raise
+                return raw.decode(charset, errors="replace"), final, enc
+
+            html_text, final_url, encoding = fetch_html(target_url, _LINKPREVIEW_HTML_HEADERS)
+            parser = _LinkPreviewHTMLParser()
+            parser.feed(html_text)
+            parser.close()
+            meta = parser.meta
+
+            title = _first_meta_value(meta, ["og:title", "twitter:title", "title"])
+            if not title:
+                title = parser.title or ""
+            description = _first_meta_value(
+                meta,
+                ["og:description", "twitter:description", "description"],
+            )
+            site_name = meta.get("og:site_name") or ""
+            canonical_url = _first_meta_value(meta, ["og:url"]) or parser.link_canonical or ""
+            base_url = parser.base_href or final_url or target_url
+            canonical_url = _resolve_url(base_url, canonical_url or final_url or target_url)
+
+            image_url, image_reason, has_strong = _pick_image_url(
+                meta,
+                parser,
+                base_url,
+                canonical_url,
+                target_url,
+            )
+
+            if not has_strong and _is_facebook_host(canonical_url or target_url):
+                fb_headers = dict(_LINKPREVIEW_HTML_HEADERS)
+                fb_headers["User-Agent"] = _FACEBOOK_UA
+                html_text, final_url, encoding = fetch_html(target_url, fb_headers)
+                parser = _LinkPreviewHTMLParser()
+                parser.feed(html_text)
+                parser.close()
+                meta = parser.meta
+                title = _first_meta_value(meta, ["og:title", "twitter:title", "title"]) or parser.title or title
+                description = _first_meta_value(
+                    meta,
+                    ["og:description", "twitter:description", "description"],
+                ) or description
+                site_name = meta.get("og:site_name") or site_name
+                base_url = parser.base_href or final_url or target_url
+                canonical_url = _resolve_url(
+                    base_url,
+                    _first_meta_value(meta, ["og:url"]) or parser.link_canonical or canonical_url,
+                )
+                image_url, image_reason, has_strong = _pick_image_url(
+                    meta,
+                    parser,
+                    base_url,
+                    canonical_url,
+                    target_url,
+                )
+
+            yt_id = _extract_youtube_id(canonical_url or target_url)
+            if yt_id:
+                oembed = _fetch_youtube_oembed(canonical_url or target_url)
+                if oembed:
+                    if oembed.get("title"):
+                        title = oembed["title"]
+                    if oembed.get("thumbnail_url"):
+                        image_url = oembed["thumbnail_url"]
+                        image_reason = "yt_oembed"
+                if (not image_url or _is_favicon_url(image_url)) and yt_id:
+                    image_url = f"https://i.ytimg.com/vi/{yt_id}/hqdefault.jpg"
+                    if not image_reason or image_reason in {"favicon", "icon"}:
+                        image_reason = "yt_oembed"
+
+            title = _trim_text(_clean_text(title), 80)
+            description = _trim_text(_clean_text(description), 160)
+            site_name = _trim_text(_clean_text(site_name), 80)
+
+            if not title:
+                title = _display_url(canonical_url)
+
+            _log_link_preview(
+                f"linkpreview_pick url={canonical_url or target_url} "
+                f"chosen_image={image_url or ''} reason={image_reason or ''}"
+            )
+
+            preview = {
+                "url": canonical_url,
+                "display_url": _display_url(canonical_url or target_url),
+                "title": title,
+                "description": description,
+                "site_name": site_name,
+                "image_url": image_url,
+                "_encoding": encoding,
+            }
+            self.finished.emit(self._url, preview)
+        except Exception as exc:
+            _log_link_preview(f"linkpreview_fail url={self._url} reason={exc}")
+            self.failed.emit(self._url, str(exc))
+
+
+class LinkThumbWorker(QThread):
+    finished = Signal(str, str, str)
+    failed = Signal(str, str)
+
+    def __init__(self, image_url: str, page_url: str, file_id: str) -> None:
+        super().__init__()
+        self._image_url = image_url
+        self._page_url = page_url
+        self._file_id = file_id
+
+    def run(self) -> None:
+        try:
+            thumb_path, err = create_link_thumb(self._image_url, self._page_url, self._file_id)
+            if not thumb_path:
+                raise RuntimeError(err or "thumbnail unavailable")
+            self.finished.emit(self._page_url, self._file_id, thumb_path)
+        except Exception as exc:
+            self.failed.emit(self._page_url, str(exc))
+
+
 class ClickableLabel(QLabel):
+    clicked = Signal()
+
+    def mousePressEvent(self, event):  # noqa: N802 - Qt naming
+        if event.button() == Qt.LeftButton:
+            self.clicked.emit()
+        super().mousePressEvent(event)
+
+
+class ClickableFrame(QFrame):
     clicked = Signal()
 
     def mousePressEvent(self, event):  # noqa: N802 - Qt naming
@@ -256,8 +526,16 @@ class ChatBubble(QFrame):
         self._text_widget: QLabel | None = None
         self._qr_label: QLabel | None = None
         self._qr_url: str | None = None
+        self._qr_btn: QToolButton | None = None
+        self._qr_visible = False
         self._reply_preview: QLabel | None = None
         self._time_label: QLabel | None = None
+        self._link_preview_card: ClickableFrame | None = None
+        self._link_preview_url: str | None = None
+        self._link_preview_thumb: QLabel | None = None
+        self._link_preview_qr_btn: QToolButton | None = None
+        self._lp_thumb_worker: LinkThumbFetchWorker | None = None
+        self._has_link_preview = False
         self._is_self = is_self
         self._theme_key = theme_key
         self._pinned = False
@@ -300,8 +578,16 @@ class ChatBubble(QFrame):
         react_btn.setToolTip("Reagieren")
         react_btn.clicked.connect(self._open_reaction_menu)
 
+        self._qr_btn = QToolButton()
+        self._qr_btn.setObjectName("qrToggleButton")
+        self._qr_btn.setText("QR")
+        self._qr_btn.setToolTip("QR-Code anzeigen")
+        self._qr_btn.clicked.connect(self._toggle_qr)
+        self._qr_btn.hide()
+
         header.addWidget(name_label)
         header.addStretch(1)
+        header.addWidget(self._qr_btn)
         header.addWidget(reply_btn)
         header.addWidget(react_btn)
         body.addLayout(header)
@@ -329,6 +615,11 @@ class ChatBubble(QFrame):
             body.addSpacing(self.REPLY_GAP_PX)
 
         if msg.get("t") == "CHAT":
+            link_preview = msg.get("link_preview")
+            if isinstance(link_preview, dict):
+                self._has_link_preview = True
+                self._build_link_preview_card(link_preview, body)
+
             self._text_widget = QLabel()
             self._text_widget.setObjectName("chatText")
             self._text_widget.setTextFormat(Qt.RichText)
@@ -349,7 +640,8 @@ class ChatBubble(QFrame):
             self._qr_label.setAlignment(Qt.AlignCenter)
             self._qr_label.setScaledContents(False)
             self._qr_label.hide()
-            body.addWidget(self._qr_label, alignment=Qt.AlignLeft)
+            align = Qt.AlignRight if self._is_self else Qt.AlignLeft
+            body.addWidget(self._qr_label, alignment=align)
 
             self._set_text_content(msg.get("text") or "", bool(msg.get("deleted")))
         else:
@@ -579,6 +871,134 @@ class ChatBubble(QFrame):
         self._set_text_content("", True)
         self._update_time_label()
 
+    def _build_link_preview_card(self, preview: dict, body_layout: QVBoxLayout) -> None:
+        url = (preview.get("url") or "").strip()
+        display_url = (preview.get("display_url") or "").strip()
+        site_name = (preview.get("site_name") or "").strip()
+        title = (preview.get("title") or "").strip()
+        description = (preview.get("description") or "").strip()
+
+        self._link_preview_url = url
+
+        domain = site_name or display_url or _display_url(url)
+        if not domain:
+            domain = _display_url(url) if url else ""
+
+        card = ClickableFrame()
+        card.setObjectName("linkPreviewCard")
+        card.setCursor(Qt.PointingHandCursor)
+        card.clicked.connect(self._open_link_preview)
+        if url:
+            card.setToolTip(url)
+        card_layout = QHBoxLayout(card)
+        card_layout.setContentsMargins(8, 6, 8, 6)
+        card_layout.setSpacing(8)
+
+        self._link_preview_thumb = QLabel()
+        self._link_preview_thumb.setObjectName("linkPreviewThumb")
+        self._link_preview_thumb.setFixedSize(72, 72)
+        self._link_preview_thumb.setScaledContents(False)
+        self._link_preview_thumb.hide()
+
+        text_layout = QVBoxLayout()
+        text_layout.setSpacing(2)
+        domain_label = QLabel(domain)
+        domain_label.setObjectName("linkPreviewDomain")
+        title_label = QLabel(title or display_url or url)
+        title_label.setObjectName("linkPreviewTitle")
+        title_label.setWordWrap(True)
+        desc_label = QLabel(description)
+        desc_label.setObjectName("linkPreviewDesc")
+        desc_label.setWordWrap(True)
+        if not description:
+            desc_label.hide()
+        text_layout.addWidget(domain_label)
+        text_layout.addWidget(title_label)
+        text_layout.addWidget(desc_label)
+
+        for label in (domain_label, title_label, desc_label, self._link_preview_thumb):
+            label.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+
+        self._link_preview_qr_btn = QToolButton()
+        self._link_preview_qr_btn.setObjectName("linkPreviewQRBtn")
+        self._link_preview_qr_btn.setText("QR")
+        self._link_preview_qr_btn.setToolTip("QR-Code anzeigen")
+        self._link_preview_qr_btn.clicked.connect(self._toggle_qr)
+
+        card_layout.addWidget(self._link_preview_thumb)
+        card_layout.addLayout(text_layout, 1)
+        card_layout.addWidget(self._link_preview_qr_btn)
+
+        self._link_preview_card = card
+        body_layout.addWidget(card)
+
+        self._load_link_preview_thumb(preview)
+        self._refresh_qr_buttons(bool(url))
+
+    def _load_link_preview_thumb(self, preview: dict) -> None:
+        if not self._link_preview_thumb:
+            return
+        thumb_url = (preview.get("thumb_url") or "").strip()
+        thumb_file_id = (preview.get("thumb_file_id") or "").strip()
+        if not thumb_file_id:
+            thumb_file_id = _link_thumb_file_id(preview.get("url") or "")
+        if not thumb_url or not thumb_file_id:
+            self._link_preview_thumb.hide()
+            return
+        cache_path = attachment_cache_path(thumb_file_id, "thumb.jpg")
+        if _is_thumb_cache_valid(thumb_file_id, thumb_url):
+            _log_thumb_cache(thumb_file_id, reused=True, src_changed=False)
+            self._apply_link_preview_thumb(str(cache_path))
+            return
+        if cache_path.exists():
+            _log_thumb_cache(thumb_file_id, reused=False, src_changed=True)
+        else:
+            _log_thumb_cache(thumb_file_id, reused=False, src_changed=False)
+        if self.msg.get("_from_history"):
+            self._link_preview_thumb.hide()
+            return
+        self._set_link_preview_thumb_placeholder("...")
+        worker = LinkThumbFetchWorker(thumb_url, str(cache_path), thumb_file_id, thumb_url)
+        worker.finished.connect(lambda path, _src: self._apply_link_preview_thumb(path))
+        worker.finished.connect(lambda _: self._clear_link_preview_worker())
+        worker.failed.connect(self._on_link_preview_thumb_failed)
+        worker.failed.connect(lambda *_: self._clear_link_preview_worker())
+        self._lp_thumb_worker = worker
+        worker.start()
+
+    def _apply_link_preview_thumb(self, path: str) -> None:
+        if not self._link_preview_thumb:
+            return
+        pixmap = QPixmap(path)
+        if pixmap.isNull():
+            return
+        _set_cover_pixmap(self._link_preview_thumb, pixmap)
+        self._link_preview_thumb.setText("")
+        self._link_preview_thumb.setToolTip("")
+        self._link_preview_thumb.show()
+
+    def _set_link_preview_thumb_placeholder(self, text: str) -> None:
+        if not self._link_preview_thumb:
+            return
+        self._link_preview_thumb.setText(text)
+        self._link_preview_thumb.setAlignment(Qt.AlignCenter)
+        self._link_preview_thumb.setToolTip("Bild wird geladen…")
+        self._link_preview_thumb.show()
+
+    def _on_link_preview_thumb_failed(self, _path: str, reason: str) -> None:
+        if not self._link_preview_thumb:
+            return
+        message = f"Thumbnail nicht verfügbar: {reason}" if reason else "Thumbnail nicht verfügbar"
+        self._link_preview_thumb.setText("!")
+        self._link_preview_thumb.setAlignment(Qt.AlignCenter)
+        self._link_preview_thumb.setToolTip(message)
+        self._link_preview_thumb.show()
+        _log_link_preview(f"linkpreview_thumb_fail url={self._link_preview_url or ''} reason={reason}")
+
+    def _clear_link_preview_worker(self) -> None:
+        if self._lp_thumb_worker and not self._lp_thumb_worker.isRunning():
+            self._lp_thumb_worker = None
+
     def _set_text_content(self, text: str, deleted: bool) -> None:
         if not self._text_widget:
             return
@@ -602,27 +1022,60 @@ class ChatBubble(QFrame):
             label = f"{label} · bearbeitet"
         self._time_label.setText(label)
 
+    def _open_link_preview(self) -> None:
+        url = (self._link_preview_url or "").strip()
+        if not url:
+            return
+        QDesktopServices.openUrl(QUrl(url))
+
+    def _refresh_qr_buttons(self, available: bool) -> None:
+        label = "QR-Code ausblenden" if self._qr_visible else "QR-Code anzeigen"
+        if self._qr_btn is not None:
+            self._qr_btn.setVisible(available and not self._has_link_preview)
+            self._qr_btn.setToolTip(label)
+        if self._link_preview_qr_btn is not None:
+            self._link_preview_qr_btn.setVisible(available and self._has_link_preview)
+            self._link_preview_qr_btn.setToolTip(label)
+
+    def _toggle_qr(self) -> None:
+        if not self._qr_label:
+            return
+        if not self._qr_url:
+            self._update_qr_code(self.msg.get("text") or "")
+            if not self._qr_url:
+                return
+        self._qr_visible = not self._qr_visible
+        self._qr_label.setVisible(self._qr_visible)
+        self._refresh_qr_buttons(True)
+
     def _update_qr_code(self, text: str) -> None:
         if not self._qr_label:
             return
-        url = extract_first_url(text)
+        if self.msg.get("deleted"):
+            url = ""
+        else:
+            url = self._link_preview_url or extract_first_url(text)
         if not url:
             self._qr_label.hide()
             self._qr_label.clear()
             self._qr_url = None
+            self._qr_visible = False
+            self._refresh_qr_buttons(False)
             return
-        if url == self._qr_url and self._qr_label.pixmap() is not None:
-            self._qr_label.show()
-            return
-        pixmap = generate_qr_pixmap(url, 120)
-        if pixmap is None or pixmap.isNull():
-            self._qr_label.hide()
-            self._qr_label.clear()
-            self._qr_url = None
-            return
-        self._qr_url = url
-        self._qr_label.setPixmap(pixmap)
-        self._qr_label.show()
+        if url != self._qr_url or self._qr_label.pixmap() is None:
+            pixmap = generate_qr_pixmap(url, 120)
+            if pixmap is None or pixmap.isNull():
+                self._qr_label.hide()
+                self._qr_label.clear()
+                self._qr_url = None
+                self._qr_visible = False
+                self._refresh_qr_buttons(False)
+                return
+            self._qr_url = url
+            self._qr_label.setPixmap(pixmap)
+            self._qr_visible = False
+        self._refresh_qr_buttons(True)
+        self._qr_label.setVisible(self._qr_visible)
 
     def _copy_to_clipboard(self) -> None:
         text = ""
@@ -727,6 +1180,18 @@ class MainWindow(QMainWindow):
         self._stick_to_bottom = True
         self._drag_active = False
         self._drag_offset = QPoint()
+        self._lp_current_url: str | None = None
+        self._lp_dismissed_url: str | None = None
+        self._lp_failed_url: str | None = None
+        self._lp_data: dict | None = None
+        self._lp_worker: LinkPreviewWorker | None = None
+        self._lp_workers: list[LinkPreviewWorker] = []
+        self._lp_thumb_worker: LinkThumbWorker | None = None
+        self._lp_thumb_workers: list[LinkThumbWorker] = []
+        self._lp_thumb_path: str | None = None
+        self._lp_thumb_file_id: str | None = None
+        self._lp_thumb_url: str | None = None
+        self._lp_thumb_error: str | None = None
 
         self.setWindowTitle(app_info.APP_NAME)
         self.setWindowFlags(self.windowFlags() | Qt.FramelessWindowHint)
@@ -962,6 +1427,43 @@ class MainWindow(QMainWindow):
             emoji_layout.addWidget(btn)
         emoji_layout.addStretch(1)
 
+        self.link_preview_bar = QFrame()
+        self.link_preview_bar.setObjectName("composerLinkPreview")
+        lp_layout = QHBoxLayout(self.link_preview_bar)
+        lp_layout.setContentsMargins(10, 8, 10, 8)
+        lp_layout.setSpacing(8)
+
+        self.lp_thumb_label = QLabel()
+        self.lp_thumb_label.setObjectName("lpThumb")
+        self.lp_thumb_label.setFixedSize(52, 52)
+        self.lp_thumb_label.setScaledContents(False)
+        self.lp_thumb_label.hide()
+
+        lp_text_col = QVBoxLayout()
+        lp_text_col.setSpacing(2)
+        self.lp_domain_label = QLabel("")
+        self.lp_domain_label.setObjectName("lpDomain")
+        self.lp_title_label = QLabel("")
+        self.lp_title_label.setObjectName("lpTitle")
+        self.lp_title_label.setWordWrap(True)
+        self.lp_desc_label = QLabel("")
+        self.lp_desc_label.setObjectName("lpDesc")
+        self.lp_desc_label.setWordWrap(True)
+        lp_text_col.addWidget(self.lp_domain_label)
+        lp_text_col.addWidget(self.lp_title_label)
+        lp_text_col.addWidget(self.lp_desc_label)
+
+        self.lp_close_btn = QToolButton()
+        self.lp_close_btn.setObjectName("lpClose")
+        self.lp_close_btn.setText("X")
+        self.lp_close_btn.setToolTip("Vorschau schließen")
+        self.lp_close_btn.clicked.connect(self._dismiss_link_preview)
+
+        lp_layout.addWidget(self.lp_thumb_label)
+        lp_layout.addLayout(lp_text_col, 1)
+        lp_layout.addWidget(self.lp_close_btn)
+        self.link_preview_bar.hide()
+
         composer = QFrame()
         composer.setObjectName("composerBar")
         composer_layout = QHBoxLayout(composer)
@@ -997,6 +1499,7 @@ class MainWindow(QMainWindow):
         chat_layout.addWidget(self.edit_bar)
         chat_layout.addWidget(self.reply_bar)
         chat_layout.addWidget(self.emoji_bar)
+        chat_layout.addWidget(self.link_preview_bar)
         chat_layout.addWidget(composer)
 
         content_layout.addWidget(self.user_panel)
@@ -1286,6 +1789,7 @@ class MainWindow(QMainWindow):
         else:
             self._typing_timer.stop()
             self._set_typing(False)
+        self._update_link_preview_from_composer()
 
     def _set_typing(self, state: bool) -> None:
         if state == self._typing_state:
@@ -1293,6 +1797,208 @@ class MainWindow(QMainWindow):
         self._typing_state = state
         self.typing_changed.emit(state)
         self._render_user_list()
+
+    def _update_link_preview_from_composer(self) -> None:
+        if not hasattr(self, "text_input"):
+            return
+        text = self.text_input.toPlainText()
+        url = extract_first_url(text)
+        if not url:
+            self._reset_link_preview_state(clear_dismissed=True)
+            return
+        url = _normalize_preview_url(url)
+        if self._lp_current_url != url:
+            self._lp_current_url = url
+            if self._lp_dismissed_url and self._lp_dismissed_url != url:
+                self._lp_dismissed_url = None
+            self._lp_failed_url = None
+            self._lp_data = None
+            self._lp_thumb_path = None
+            self._lp_thumb_file_id = None
+            self._lp_thumb_url = None
+            self._lp_thumb_error = None
+            self._set_link_preview_loading(url)
+            self._start_link_preview_fetch(url)
+            return
+        if url == self._lp_dismissed_url or url == self._lp_failed_url:
+            self.link_preview_bar.hide()
+            return
+        if self._lp_data:
+            self._render_link_preview_bar(self._lp_data)
+            return
+        if self._lp_worker and self._lp_worker.isRunning():
+            self._set_link_preview_loading(url)
+            return
+        self._set_link_preview_loading(url)
+        self._start_link_preview_fetch(url)
+
+    def _start_link_preview_fetch(self, url: str) -> None:
+        worker = LinkPreviewWorker(url)
+        self._lp_worker = worker
+        self._lp_workers.append(worker)
+        worker.finished.connect(self._on_link_preview_ready)
+        worker.failed.connect(self._on_link_preview_failed)
+        worker.finished.connect(self._cleanup_link_preview_workers)
+        worker.failed.connect(self._cleanup_link_preview_workers)
+        worker.start()
+
+    def _dismiss_link_preview(self) -> None:
+        if self._lp_current_url:
+            self._lp_dismissed_url = self._lp_current_url
+        self.link_preview_bar.hide()
+
+    def _reset_link_preview_state(self, clear_dismissed: bool = False) -> None:
+        self._lp_current_url = None
+        self._lp_data = None
+        self._lp_thumb_path = None
+        self._lp_thumb_file_id = None
+        self._lp_thumb_url = None
+        self._lp_thumb_error = None
+        self._lp_failed_url = None
+        if clear_dismissed:
+            self._lp_dismissed_url = None
+        self.lp_domain_label.setText("")
+        self.lp_title_label.setText("")
+        self.lp_desc_label.setText("")
+        self.lp_desc_label.show()
+        self.lp_thumb_label.hide()
+        self.lp_thumb_label.clear()
+        self.lp_thumb_label.setToolTip("")
+        self.link_preview_bar.hide()
+
+    def _set_link_preview_loading(self, url: str) -> None:
+        self.link_preview_bar.show()
+        self.lp_domain_label.setText(_display_url(url))
+        self.lp_title_label.setText("Vorschau wird geladen…")
+        self.lp_desc_label.setText("")
+        self.lp_desc_label.hide()
+        self.lp_thumb_label.hide()
+        self.lp_thumb_label.clear()
+
+    def _render_link_preview_bar(self, data: dict) -> None:
+        url = data.get("url") or self._lp_current_url or ""
+        domain = data.get("site_name") or data.get("display_url") or _display_url(url)
+        title = data.get("title") or data.get("display_url") or url
+        desc = data.get("description") or ""
+        self.lp_domain_label.setText(domain)
+        self.lp_title_label.setText(title)
+        self.lp_desc_label.setText(desc)
+        self.lp_desc_label.setVisible(bool(desc))
+        if self._lp_thumb_path and Path(self._lp_thumb_path).exists():
+            self._set_link_preview_thumb(self._lp_thumb_path)
+        else:
+            if self._lp_thumb_error:
+                self._set_link_preview_thumb_error(self._lp_thumb_error)
+            else:
+                self.lp_thumb_label.hide()
+                self.lp_thumb_label.clear()
+                self.lp_thumb_label.setToolTip("")
+        self.link_preview_bar.show()
+
+    def _set_link_preview_thumb(self, path: str) -> None:
+        pixmap = QPixmap(path)
+        if pixmap.isNull():
+            return
+        _set_cover_pixmap(self.lp_thumb_label, pixmap)
+        self.lp_thumb_label.setText("")
+        self.lp_thumb_label.setToolTip("")
+        self.lp_thumb_label.show()
+
+    def _set_link_preview_thumb_loading(self) -> None:
+        self.lp_thumb_label.setText("Bild\nlädt…")
+        self.lp_thumb_label.setAlignment(Qt.AlignCenter)
+        self.lp_thumb_label.setToolTip("Bild wird geladen…")
+        self.lp_thumb_label.show()
+
+    def _set_link_preview_thumb_error(self, reason: str) -> None:
+        message = f"Thumbnail nicht verfügbar: {reason}" if reason else "Thumbnail nicht verfügbar"
+        self.lp_thumb_label.setText("!")
+        self.lp_thumb_label.setAlignment(Qt.AlignCenter)
+        self.lp_thumb_label.setToolTip(message)
+        self.lp_thumb_label.show()
+
+    def _on_link_preview_ready(self, url: str, data: dict) -> None:
+        if url != self._lp_current_url:
+            return
+        self._lp_data = data
+        title_len = len(data.get("title") or "")
+        desc_len = len(data.get("description") or "")
+        image_url = (data.get("image_url") or "").strip()
+        encoding = data.get("_encoding") or ""
+        if title_len == 0 or desc_len == 0 or not image_url or _is_favicon_url(image_url):
+            _log_link_preview(
+                f"linkpreview_meta url={data.get('url') or url} title={title_len} desc={desc_len} "
+                f"image={image_url or ''} enc={encoding}"
+            )
+        if url == self._lp_dismissed_url:
+            return
+        self._render_link_preview_bar(data)
+        image_url = data.get("image_url") or ""
+        if not image_url:
+            return
+        file_id = _link_thumb_file_id(data.get("url") or self._lp_current_url or url)
+        self._lp_thumb_file_id = file_id
+        cached_path = attachment_cache_path(file_id, "thumb.jpg")
+        if _is_thumb_cache_valid(file_id, image_url):
+            _log_thumb_cache(file_id, reused=True, src_changed=False)
+            self._lp_thumb_path = str(cached_path)
+            self._set_link_preview_thumb(str(cached_path))
+            return
+        if cached_path.exists():
+            _log_thumb_cache(file_id, reused=False, src_changed=True)
+        else:
+            _log_thumb_cache(file_id, reused=False, src_changed=False)
+        self._set_link_preview_thumb_loading()
+        self._start_link_thumb_fetch(image_url, data.get("url") or self._lp_current_url or url, file_id)
+
+    def _on_link_preview_failed(self, url: str, _err: str) -> None:
+        if url != self._lp_current_url:
+            return
+        _log_link_preview(f"linkpreview_meta url={url} title=0 desc=0 image=no")
+        self._lp_failed_url = url
+        self._lp_data = None
+        self._lp_thumb_path = None
+        self._lp_thumb_file_id = None
+        self._lp_thumb_url = None
+        self.link_preview_bar.hide()
+
+    def _start_link_thumb_fetch(self, image_url: str, page_url: str, file_id: str) -> None:
+        worker = LinkThumbWorker(image_url, page_url, file_id)
+        self._lp_thumb_worker = worker
+        self._lp_thumb_workers.append(worker)
+        worker.finished.connect(self._on_link_thumb_ready)
+        worker.failed.connect(self._on_link_thumb_failed)
+        worker.finished.connect(self._cleanup_link_thumb_workers)
+        worker.failed.connect(self._cleanup_link_thumb_workers)
+        worker.start()
+
+    def _on_link_thumb_ready(self, page_url: str, file_id: str, thumb_path: str) -> None:
+        if file_id != self._lp_thumb_file_id:
+            return
+        self._lp_thumb_path = thumb_path
+        self._lp_thumb_error = None
+        self._set_link_preview_thumb(thumb_path)
+
+    def _on_link_thumb_failed(self, page_url: str, err: str) -> None:
+        current_urls = {self._lp_current_url or "", (self._lp_data or {}).get("url") or ""}
+        if page_url and page_url not in current_urls:
+            return
+        if not self._lp_thumb_file_id:
+            return
+        self._lp_thumb_path = None
+        self._lp_thumb_error = err
+        self._set_link_preview_thumb_error(err)
+        _log_link_preview(f"linkpreview_thumb_fail url={page_url} reason={err}")
+
+    def _cleanup_link_preview_workers(self) -> None:
+        self._lp_workers = [w for w in self._lp_workers if w.isRunning()]
+        if self._lp_worker and not self._lp_worker.isRunning():
+            self._lp_worker = None
+
+    def _cleanup_link_thumb_workers(self) -> None:
+        self._lp_thumb_workers = [w for w in self._lp_thumb_workers if w.isRunning()]
+        if self._lp_thumb_worker and not self._lp_thumb_worker.isRunning():
+            self._lp_thumb_worker = None
 
     def _set_reply(self, msg: dict) -> None:
         self._clear_edit()
@@ -1404,10 +2110,27 @@ class MainWindow(QMainWindow):
                         "reply_type": self._reply_target.get("t") or "",
                     }
                 )
+            if (
+                self._lp_data
+                and self._lp_current_url
+                and self._lp_current_url != self._lp_dismissed_url
+            ):
+                preview_url = self._lp_data.get("url") or self._lp_current_url
+                payload["link_preview"] = {
+                    "url": preview_url,
+                    "display_url": self._lp_data.get("display_url") or _display_url(preview_url),
+                    "title": self._lp_data.get("title") or "",
+                    "description": self._lp_data.get("description") or "",
+                    "site_name": self._lp_data.get("site_name") or "",
+                }
+                if self._lp_thumb_path and self._lp_thumb_file_id:
+                    payload["link_preview"]["thumb_path"] = self._lp_thumb_path
+                    payload["link_preview"]["thumb_file_id"] = self._lp_thumb_file_id
             self.send_text.emit(payload)
             self.text_input.clear()
             self._clear_reply()
             self._set_typing(False)
+            self._reset_link_preview_state(clear_dismissed=True)
 
         if self._attachments:
             self.send_files.emit(list(self._attachments))
@@ -1733,3 +2456,294 @@ def _trim_text(text: str, max_len: int = 120) -> str:
 def _is_image_file(filename: str) -> bool:
     suffix = Path(filename).suffix.lower()
     return suffix in {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp"}
+
+
+_LINKPREVIEW_UA = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/120 Safari/537.36"
+)
+_FACEBOOK_UA = "facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)"
+
+_LINKPREVIEW_HTML_HEADERS = {
+    "User-Agent": _LINKPREVIEW_UA,
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Encoding": "identity",
+    "Accept-Language": "de-DE,de;q=0.9,en;q=0.8",
+    "Cache-Control": "no-cache",
+    "Pragma": "no-cache",
+}
+
+_LINKPREVIEW_IMAGE_HEADERS = {
+    "User-Agent": _LINKPREVIEW_UA,
+    "Accept": "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
+    "Accept-Encoding": "identity",
+    "Accept-Language": "de-DE,de;q=0.9,en;q=0.8",
+}
+
+
+def _clean_text(text: str) -> str:
+    return " ".join((text or "").split())
+
+
+def _first_meta_value(meta: dict[str, str], keys: list[str]) -> str:
+    for key in keys:
+        value = meta.get(key.lower()) or ""
+        if value.strip():
+            return value.strip()
+    return ""
+
+
+def _log_link_preview(message: str) -> None:
+    if not message:
+        return
+    try:
+        path = logs_dir() / "link_preview.log"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(f"{message}\n")
+    except Exception:
+        pass
+
+
+def _log_thumb_cache(file_id: str, reused: bool, src_changed: bool) -> None:
+    _log_link_preview(
+        f"linkpreview_thumb_cache file_id={file_id} reused={'yes' if reused else 'no'} "
+        f"src_changed={'yes' if src_changed else 'no'}"
+    )
+
+
+def _thumb_src_path(file_id: str) -> Path:
+    return attachment_cache_path(file_id, "thumb_src.txt")
+
+
+def _read_thumb_src(file_id: str) -> str:
+    path = _thumb_src_path(file_id)
+    if not path.exists():
+        return ""
+    try:
+        return path.read_text(encoding="utf-8").strip()
+    except Exception:
+        return ""
+
+
+def _write_thumb_src(file_id: str, src: str) -> None:
+    if not file_id:
+        return
+    path = _thumb_src_path(file_id)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(src or "", encoding="utf-8")
+    except Exception:
+        pass
+
+
+def _is_thumb_cache_valid(file_id: str, source_url: str) -> bool:
+    if not file_id or not source_url:
+        return False
+    cache_path = attachment_cache_path(file_id, "thumb.jpg")
+    if not cache_path.exists():
+        return False
+    cached_src = _read_thumb_src(file_id)
+    return bool(cached_src) and cached_src == source_url
+
+
+def _resolve_url(base_url: str, url: str) -> str:
+    url = (url or "").strip()
+    if not url:
+        return ""
+    if url.startswith("//"):
+        return f"https:{url}"
+    if base_url:
+        return urllib.parse.urljoin(base_url, url)
+    return url
+
+
+def _is_favicon_url(url: str) -> bool:
+    url = (url or "").lower()
+    return "favicon.ico" in url or url.endswith("/favicon.ico")
+
+
+def _pick_image_url(
+    meta: dict[str, str],
+    parser: _LinkPreviewHTMLParser,
+    base_url: str,
+    canonical_url: str,
+    target_url: str,
+) -> tuple[str, str, bool]:
+    for key in ["og:image", "og:image:secure_url", "og:image:url"]:
+        value = meta.get(key)
+        if value:
+            return _resolve_url(base_url, value), "og", True
+    for key in ["twitter:image", "twitter:image:src"]:
+        value = meta.get(key)
+        if value:
+            return _resolve_url(base_url, value), "twitter", True
+    if parser.link_image_src:
+        return _resolve_url(base_url, parser.link_image_src), "image_src", True
+    value = meta.get("image")
+    if value:
+        return _resolve_url(base_url, value), "image_src", True
+    if parser.link_apple_icon:
+        return _resolve_url(base_url, parser.link_apple_icon), "icon", False
+    if parser.link_icon:
+        return _resolve_url(base_url, parser.link_icon), "icon", False
+    host = _display_url(canonical_url or target_url)
+    if host:
+        return f"https://{host}/favicon.ico", "favicon", False
+    return "", "", False
+
+
+def _is_facebook_host(url: str) -> bool:
+    host = (urllib.parse.urlparse(url or "").netloc or "").lower()
+    return host.endswith("facebook.com") or host.endswith("fb.watch")
+
+
+def _fetch_youtube_oembed(url: str) -> dict[str, str] | None:
+    if not url:
+        return None
+    try:
+        endpoint = "https://www.youtube.com/oembed?format=json&url="
+        req_url = endpoint + urllib.parse.quote(url, safe="")
+        req = urllib.request.Request(req_url, headers=_LINKPREVIEW_HTML_HEADERS)
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            if resp.status != 200:
+                return None
+            raw = resp.read()
+        data = json.loads(raw.decode("utf-8", errors="replace"))
+        if not isinstance(data, dict):
+            return None
+        return {
+            "title": str(data.get("title") or ""),
+            "thumbnail_url": str(data.get("thumbnail_url") or ""),
+        }
+    except Exception:
+        return None
+
+
+def _extract_youtube_id(url: str) -> str:
+    if not url:
+        return ""
+    parsed = urllib.parse.urlparse(url)
+    host = (parsed.netloc or "").lower()
+    path = parsed.path or ""
+    if "youtu.be" in host:
+        return path.strip("/").split("/")[0]
+    if "youtube.com" not in host:
+        return ""
+    query = urllib.parse.parse_qs(parsed.query or "")
+    if "v" in query and query["v"]:
+        return query["v"][0]
+    parts = [p for p in path.split("/") if p]
+    if parts:
+        if parts[0] in {"embed", "shorts", "v"} and len(parts) > 1:
+            return parts[1]
+    return ""
+
+
+def _normalize_preview_url(url: str) -> str:
+    url = (url or "").strip()
+    if url.startswith("<") and url.endswith(">") and len(url) > 2:
+        url = url[1:-1].strip()
+    if url.startswith("www."):
+        return f"https://{url}"
+    if url.startswith("http://www."):
+        return "https://" + url[len("http://") :]
+    parsed = urllib.parse.urlparse(url)
+    if not parsed.scheme:
+        return f"https://{url}"
+    return url
+
+
+def _display_url(url: str) -> str:
+    url = (url or "").strip()
+    if not url:
+        return ""
+    parsed = urllib.parse.urlparse(url)
+    host = parsed.netloc or parsed.path
+    if "/" in host:
+        host = host.split("/", 1)[0]
+    if host.startswith("www."):
+        host = host[4:]
+    return host
+
+
+def _link_thumb_file_id(url: str) -> str:
+    digest = hashlib.sha1((url or "").encode("utf-8")).hexdigest()
+    return f"lp_{digest[:12]}"
+
+
+def _set_cover_pixmap(label: QLabel, pixmap: QPixmap) -> None:
+    size = label.size()
+    if size.width() <= 0 or size.height() <= 0:
+        return
+    scaled = pixmap.scaled(size, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
+    x = max(0, (scaled.width() - size.width()) // 2)
+    y = max(0, (scaled.height() - size.height()) // 2)
+    label.setPixmap(scaled.copy(x, y, size.width(), size.height()))
+
+
+def _resize_cover_image(image, target_w: int, target_h: int):
+    w, h = image.size
+    if w <= 0 or h <= 0:
+        return image
+    scale = max(target_w / w, target_h / h)
+    new_w = max(1, int(w * scale))
+    new_h = max(1, int(h * scale))
+    from PIL import Image
+
+    resample = Image.Resampling.LANCZOS if hasattr(Image, "Resampling") else Image.LANCZOS
+    resized = image.resize((new_w, new_h), resample=resample)
+    left = max(0, (new_w - target_w) // 2)
+    top = max(0, (new_h - target_h) // 2)
+    return resized.crop((left, top, left + target_w, top + target_h))
+
+
+def create_link_thumb(image_url: str, page_url: str, file_id: str) -> tuple[str | None, str | None]:
+    if not image_url or not file_id:
+        return None, "missing input"
+    cache_path = attachment_cache_path(file_id, "thumb.jpg")
+    cached_src = _read_thumb_src(file_id)
+    if cache_path.exists() and cached_src == image_url:
+        return str(cache_path), None
+    try:
+        headers = dict(_LINKPREVIEW_IMAGE_HEADERS)
+        if page_url:
+            headers["Referer"] = page_url
+        if _is_facebook_host(page_url or image_url):
+            headers["User-Agent"] = _FACEBOOK_UA
+        req = urllib.request.Request(image_url, headers=headers)
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            content_type = (resp.headers.get("Content-Type") or "").lower()
+            if "text/html" in content_type:
+                return None, "html response"
+            if "svg" in content_type or "xml" in content_type:
+                return None, "svg unsupported"
+            max_bytes = 3 * 1024 * 1024
+            data = bytearray()
+            while len(data) < max_bytes:
+                chunk = resp.read(1024 * 64)
+                if not chunk:
+                    break
+                data.extend(chunk)
+                if len(data) >= max_bytes:
+                    return None, "image too large"
+        if not data:
+            return None, "empty image response"
+        try:
+            from PIL import Image
+        except Exception as exc:  # pragma: no cover - pillow missing
+            return None, f"pillow missing: {exc}"
+        image = Image.open(io.BytesIO(data))
+        if image.format == "GIF":
+            try:
+                image.seek(0)
+            except Exception:
+                pass
+        image = image.convert("RGB")
+        image = _resize_cover_image(image, 240, 240)
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        image.save(str(cache_path), format="JPEG", quality=75)
+        _write_thumb_src(file_id, image_url)
+        return str(cache_path), None
+    except Exception as exc:
+        return None, str(exc)

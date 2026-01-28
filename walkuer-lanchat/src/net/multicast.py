@@ -321,6 +321,17 @@ class LanChatNetwork(QObject):
         self._send_or_queue(msg)
         return msg
 
+    def host_local_file(self, file_id: str, file_path: str) -> str:
+        port = self._file_server.ensure_running()
+        if not port:
+            return ""
+        if port != self._http_port:
+            self._http_port = port
+            self.send_hello()
+        self._file_server.register_file(file_id, file_path)
+        self._refresh_network_state()
+        return f"http://{self._last_ip}:{self._http_port}/f/{file_id}"
+
     def register_cached_file(self, file_id: str, file_path: str) -> None:
         port = self._file_server.ensure_running()
         if not port:

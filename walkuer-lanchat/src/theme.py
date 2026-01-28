@@ -95,6 +95,37 @@ QFrame#composerBar {{
     border: 1px solid {BORDER};
     border-radius: 12px;
 }}
+QFrame#composerLinkPreview {{
+    background: {INPUT_BG};
+    border: 1px solid {NEON_GREEN};
+    border-radius: 12px;
+}}
+QLabel#lpThumb {{
+    background: {INPUT_BG};
+    border: 1px solid {BORDER};
+    border-radius: 8px;
+}}
+QLabel#lpDomain {{
+    color: {TEXT_MUTED};
+    font-size: 8pt;
+}}
+QLabel#lpTitle {{
+    color: {TEXT};
+    font-weight: 600;
+}}
+QLabel#lpDesc {{
+    color: {TEXT_MUTED};
+    font-size: 8pt;
+}}
+QToolButton#lpClose {{
+    background: transparent;
+    border: 1px solid {BORDER};
+    border-radius: 6px;
+    padding: 2px 6px;
+}}
+QToolButton#lpClose:hover {{
+    border-color: {NEON_GREEN};
+}}
 QFrame#attachmentsPanel {{
     background: {INPUT_BG};
     border: 1px dashed {BORDER};
@@ -261,6 +292,38 @@ QLabel#replyPreview {{
     color: {TEXT_MUTED};
     font-size: 8pt;
 }}
+QFrame#linkPreviewCard {{
+    background: {INPUT_BG};
+    border: 1px solid {BORDER};
+    border-radius: 10px;
+}}
+QLabel#linkPreviewThumb {{
+    background: {INPUT_BG};
+    border: 1px solid {BORDER};
+    border-radius: 6px;
+}}
+QLabel#linkPreviewDomain {{
+    color: {TEXT_MUTED};
+    font-size: 8pt;
+}}
+QLabel#linkPreviewTitle {{
+    color: {TEXT};
+    font-weight: 600;
+}}
+QLabel#linkPreviewDesc {{
+    color: {TEXT_MUTED};
+    font-size: 8pt;
+}}
+QToolButton#linkPreviewQRBtn {{
+    background: {INPUT_BG};
+    border: 1px solid {BORDER};
+    border-radius: 6px;
+    padding: 2px 6px;
+    font-size: 8pt;
+}}
+QToolButton#linkPreviewQRBtn:hover {{
+    border-color: {NEON_GREEN};
+}}
 QFrame#reactionBar {{
     background: transparent;
 }}
@@ -282,6 +345,16 @@ QToolButton#replyButton, QToolButton#reactionButton {{
     font-size: 9pt;
 }}
 QToolButton#replyButton:hover, QToolButton#reactionButton:hover {{
+    border-color: {NEON_GREEN};
+}}
+QToolButton#qrToggleButton {{
+    background: {INPUT_BG};
+    border: 1px solid {BORDER};
+    border-radius: 6px;
+    padding: 2px 6px;
+    font-size: 8pt;
+}}
+QToolButton#qrToggleButton:hover {{
     border-color: {NEON_GREEN};
 }}
 QLabel#imagePreview {{
