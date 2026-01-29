@@ -148,10 +148,12 @@ class SettingsDialog(QDialog):
         layout.addWidget(chat_bg_label)
         layout.addWidget(self.chat_bg_mode)
 
-        layout.addWidget(QLabel("Farbe"))
+        self.chat_bg_color_label = QLabel("Farbe")
+        layout.addWidget(self.chat_bg_color_label)
         layout.addWidget(self.chat_bg_color_btn)
 
-        layout.addWidget(QLabel("Bild"))
+        self.chat_bg_image_label = QLabel("Bild")
+        layout.addWidget(self.chat_bg_image_label)
         layout.addWidget(self.chat_bg_image_path)
         layout.addWidget(self.chat_bg_image_btn)
 
@@ -231,6 +233,11 @@ class SettingsDialog(QDialog):
         self.chat_bg_color_btn.setEnabled(is_color)
         self.chat_bg_image_btn.setEnabled(is_image)
         self.chat_bg_image_path.setEnabled(is_image)
+        self.chat_bg_color_label.setVisible(is_color)
+        self.chat_bg_color_btn.setVisible(is_color)
+        self.chat_bg_image_label.setVisible(is_image)
+        self.chat_bg_image_path.setVisible(is_image)
+        self.chat_bg_image_btn.setVisible(is_image)
         self.chat_bg_opacity.setEnabled(is_color or is_image)
         self.chat_bg_opacity_label.setEnabled(is_color or is_image)
 

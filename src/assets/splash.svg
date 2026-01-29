@@ -1,0 +1,94 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="500" viewBox="0 0 900 500">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#050607"/>
+      <stop offset="1" stop-color="#07140f"/>
+    </linearGradient>
+
+    <filter id="glow" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur stdDeviation="3" result="b"/>
+      <feColorMatrix in="b" type="matrix"
+        values="0 0 0 0 0
+                0 1 0 0 0.9
+                0 0 0 0 0
+                0 0 0 1 0" result="g"/>
+      <feMerge>
+        <feMergeNode in="g"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+
+    <pattern id="grid" width="30" height="30" patternUnits="userSpaceOnUse">
+      <path d="M 30 0 L 0 0 0 30" fill="none" stroke="#00ff66" stroke-opacity="0.10" stroke-width="1"/>
+    </pattern>
+
+    <linearGradient id="bar" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#00ff66" stop-opacity="0.0"/>
+      <stop offset="0.2" stop-color="#00ff66" stop-opacity="0.35"/>
+      <stop offset="0.8" stop-color="#00ff66" stop-opacity="0.35"/>
+      <stop offset="1" stop-color="#00ff66" stop-opacity="0.0"/>
+    </linearGradient>
+  </defs>
+
+  <rect x="0" y="0" width="900" height="500" fill="url(#bg)"/>
+  <rect x="0" y="0" width="900" height="500" fill="url(#grid)"/>
+
+  <rect x="40" y="40" width="820" height="420" rx="18" ry="18"
+        fill="#06110c" fill-opacity="0.55" stroke="#00ff66" stroke-opacity="0.25" stroke-width="2"/>
+
+  <rect x="70" y="90" width="760" height="6" fill="url(#bar)"/>
+
+  <text x="450" y="120" text-anchor="middle"
+        font-family="Orbitron, Segoe UI, Arial, sans-serif"
+        font-size="42" font-weight="800"
+        fill="#00ff66" filter="url(#glow)">
+    WALKÜR TECHNOLOGY
+  </text>
+
+  <text x="450" y="150" text-anchor="middle"
+        font-family="Segoe UI, Arial, sans-serif"
+        font-size="16" font-weight="600"
+        fill="#9dffbf" opacity="0.9">
+    LAN Chat - Secure Local Comms
+  </text>
+
+  <rect x="120" y="190" width="660" height="190" rx="12" ry="12"
+        fill="#040806" fill-opacity="0.55" stroke="#00ff66" stroke-opacity="0.28" stroke-width="1.5"/>
+
+  <text x="140" y="220"
+        font-family="Consolas, Menlo, Monaco, monospace"
+        font-size="14" fill="#b7ffd1" opacity="0.95">##############################################</text>
+  <text x="140" y="238"
+        font-family="Consolas, Menlo, Monaco, monospace"
+        font-size="14" fill="#b7ffd1" opacity="0.95">#  Name:  Silvan Fülle                       #</text>
+  <text x="140" y="256"
+        font-family="Consolas, Menlo, Monaco, monospace"
+        font-size="14" fill="#b7ffd1" opacity="0.95">#  Firma: Walkür Technology                   #</text>
+  <text x="140" y="274"
+        font-family="Consolas, Menlo, Monaco, monospace"
+        font-size="14" fill="#b7ffd1" opacity="0.95">#  Web:   https://walkuer.tech                #</text>
+  <text x="140" y="292"
+        font-family="Consolas, Menlo, Monaco, monospace"
+        font-size="14" fill="#b7ffd1" opacity="0.95">#  Git:   https://github.com/PrivTEC          #</text>
+  <text x="140" y="310"
+        font-family="Consolas, Menlo, Monaco, monospace"
+        font-size="14" fill="#b7ffd1" opacity="0.95">#  App:   Walkür LAN Chat                     #</text>
+  <text x="140" y="328"
+        font-family="Consolas, Menlo, Monaco, monospace"
+        font-size="14" fill="#b7ffd1" opacity="0.95">#  Status: Boot sequence...                   #</text>
+  <text x="140" y="346"
+        font-family="Consolas, Menlo, Monaco, monospace"
+        font-size="14" fill="#b7ffd1" opacity="0.95">##############################################</text>
+
+  <text x="450" y="420" text-anchor="middle"
+        font-family="Consolas, Menlo, Monaco, monospace"
+        font-size="12" fill="#00ff66" opacity="0.55">
+    initializing subsystems | network | ui | cache | crypto
+  </text>
+
+  <text x="450" y="448" text-anchor="middle"
+        font-family="Segoe UI, Arial, sans-serif"
+        font-size="12" fill="#9dffbf" opacity="0.75">
+    Please wait - starting up…
+  </text>
+</svg>

@@ -4,9 +4,12 @@ import logging
 import sys
 import threading
 from logging.handlers import RotatingFileHandler
+from pathlib import Path
 
-from PySide6.QtCore import QSettings
-from PySide6.QtWidgets import QApplication
+from PySide6.QtCore import QAbstractAnimation, QPropertyAnimation, QSize, Qt, QSettings, QTimer
+from PySide6.QtGui import QColor, QImage, QPainter, QPixmap
+from PySide6.QtSvg import QSvgRenderer
+from PySide6.QtWidgets import QApplication, QGraphicsOpacityEffect, QSplashScreen
 
 from config_store import ConfigStore
 from net.message_store import HistoryStore
@@ -34,19 +37,86 @@ def setup_logging() -> None:
     root.addHandler(handler)
 
 
+def _render_svg_to_pixmap(svg_path: Path, target_size: QSize, dpr: float) -> QPixmap:
+    renderer = QSvgRenderer(str(svg_path))
+    if not renderer.isValid():
+        return QPixmap()
+    width = max(1, int(target_size.width() * dpr))
+    height = max(1, int(target_size.height() * dpr))
+    image = QImage(width, height, QImage.Format_ARGB32_Premultiplied)
+    image.fill(Qt.transparent)
+    painter = QPainter(image)
+    renderer.render(painter)
+    painter.end()
+    pixmap = QPixmap.fromImage(image)
+    pixmap.setDevicePixelRatio(dpr)
+    return pixmap
+
+
+def _fallback_splash_pixmap(target_size: QSize, dpr: float) -> QPixmap:
+    width = max(1, int(target_size.width() * dpr))
+    height = max(1, int(target_size.height() * dpr))
+    image = QImage(width, height, QImage.Format_ARGB32_Premultiplied)
+    image.fill(QColor("#050607"))
+    painter = QPainter(image)
+    painter.setPen(QColor("#00ff66"))
+    painter.drawText(image.rect(), Qt.AlignCenter, "WALKÜR TECHNOLOGY\nLAN Chat")
+    painter.end()
+    pixmap = QPixmap.fromImage(image)
+    pixmap.setDevicePixelRatio(dpr)
+    return pixmap
+
+
+def _create_splash(app: QApplication) -> QSplashScreen | None:
+    screen = app.primaryScreen()
+    if screen is None:
+        return None
+    geo = screen.availableGeometry()
+    width = min(900, int(geo.width() * 0.55))
+    height = max(1, int(width * (500 / 900)))
+    size = QSize(width, height)
+    dpr = screen.devicePixelRatio() or 1.0
+    base_path = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
+    svg_path = base_path / "assets" / "splash.svg"
+    pixmap = _render_svg_to_pixmap(svg_path, size, dpr) if svg_path.exists() else QPixmap()
+    if pixmap.isNull():
+        pixmap = _fallback_splash_pixmap(size, dpr)
+    splash = QSplashScreen(pixmap)
+    splash.setWindowFlag(Qt.WindowStaysOnTopHint, True)
+    return splash
+
+
 def main() -> int:
     setup_logging()
-    store = ConfigStore()
-    store.load()
-
     app = QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)
+
+    splash = _create_splash(app)
+    if splash:
+        splash.show()
+        splash.showMessage(
+            "Initialisiere Systeme…",
+            alignment=Qt.AlignBottom | Qt.AlignHCenter,
+            color=QColor("#00ff66"),
+        )
+        app.processEvents()
+
+    store = ConfigStore()
+    store.load()
     apply_theme(app, store.config.theme)
 
     icon = app_icon()
     app.setWindowIcon(icon)
 
     settings = QSettings("WalkuerTechnology", "LanChat")
+
+    if splash:
+        splash.showMessage(
+            "Lade UI…",
+            alignment=Qt.AlignBottom | Qt.AlignHCenter,
+            color=QColor("#00ff66"),
+        )
+        app.processEvents()
 
     window = MainWindow(store)
     window.setWindowIcon(icon)
@@ -57,7 +127,22 @@ def main() -> int:
         except Exception:
             pass
 
+    if splash:
+        splash.showMessage(
+            "Initialisiere Netzwerk…",
+            alignment=Qt.AlignBottom | Qt.AlignHCenter,
+            color=QColor("#00ff66"),
+        )
+        app.processEvents()
+
     network = LanChatNetwork(store)
+    if splash:
+        splash.showMessage(
+            "Lade Verlauf…",
+            alignment=Qt.AlignBottom | Qt.AlignHCenter,
+            color=QColor("#00ff66"),
+        )
+        app.processEvents()
     history = HistoryStore(history_path())
     loaded_messages = history.load()
 
@@ -329,7 +414,30 @@ def main() -> int:
     if not store.config.first_run_complete:
         show_settings(force=True)
 
-    window.show()
+    if splash:
+        app.processEvents()
+
+        def start_splash_fade() -> None:
+            effect = QGraphicsOpacityEffect(splash)
+            splash.setGraphicsEffect(effect)
+            anim = QPropertyAnimation(effect, b"opacity", splash)
+            anim.setDuration(180)
+            anim.setStartValue(1.0)
+            anim.setEndValue(0.0)
+
+            def _finish() -> None:
+                splash.finish(window)
+                splash.deleteLater()
+                window.show()
+                window.activateWindow()
+
+            anim.finished.connect(_finish)
+            anim.start(QAbstractAnimation.DeleteWhenStopped)
+            splash._fade_anim = anim  # keep alive
+
+        QTimer.singleShot(0, start_splash_fade)
+    else:
+        window.show()
 
     exit_code = app.exec()
     save_geometry()
