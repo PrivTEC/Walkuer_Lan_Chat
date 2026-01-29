@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ctypes
 import gzip
 import hashlib
 import html
@@ -14,7 +15,7 @@ from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import Qt, QThread, QTimer, Signal, QSize, QEvent, QPoint, QRectF, QUrl
+from PySide6.QtCore import Qt, QThread, QTimer, Signal, QSize, QEvent, QPoint, QRect, QRectF, QUrl
 from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen, QPixmap, QDesktopServices
 from PySide6.QtWidgets import (
     QApplication,
@@ -1251,9 +1252,21 @@ class MainWindow(QMainWindow):
         top_layout.addWidget(self._max_btn)
         top_layout.addWidget(close_btn)
 
+        self._topbar = topbar
+        self._title_controls = {settings_btn, minimize_btn, self._max_btn, close_btn}
+        self._resize_margin = 6
+        self._resize_edges = Qt.Edges()
+        self._use_native_frame = False
+        self._normal_geometry: QRect | None = None
+        self._pending_normal_geometry: QRect | None = None
+        self._pending_geometry_attempts = 0
+
         self._drag_widgets = {topbar, title_label, icon_label}
         for widget in self._drag_widgets:
             widget.installEventFilter(self)
+        app = QApplication.instance()
+        if app:
+            app.installEventFilter(self)
 
         header = QLabel("Walkür Technology")
         header.setObjectName("headerTitle")
@@ -1523,8 +1536,30 @@ class MainWindow(QMainWindow):
 
     def resizeEvent(self, event):  # noqa: N802 - Qt naming
         super().resizeEvent(event)
+        self._store_normal_geometry()
         self._update_bubble_widths()
         self._update_chat_background_geometry()
+
+    def moveEvent(self, event):  # noqa: N802 - Qt naming
+        super().moveEvent(event)
+        self._store_normal_geometry()
+
+    def _store_normal_geometry(self) -> None:
+        if self.windowState() & (Qt.WindowMaximized | Qt.WindowMinimized):
+            return
+        self._normal_geometry = self.geometry()
+
+    def _apply_pending_geometry(self) -> None:
+        if not self._pending_normal_geometry:
+            return
+        if self.windowState() & (Qt.WindowMaximized | Qt.WindowMinimized):
+            self._pending_geometry_attempts += 1
+            if self._pending_geometry_attempts <= 6:
+                QTimer.singleShot(0, self._apply_pending_geometry)
+            return
+        self._pending_geometry_attempts = 0
+        self.setGeometry(self._pending_normal_geometry)
+        self._pending_normal_geometry = None
 
     def _update_bubble_widths(self) -> None:
         target = int(self.chat_area.viewport().width() * 0.62)
@@ -2261,13 +2296,157 @@ class MainWindow(QMainWindow):
             self.hide()
             event.ignore()
 
+    def _is_in_titlebar(self, global_pos: QPoint) -> bool:
+        topbar = getattr(self, "_topbar", None)
+        if not topbar or not topbar.isVisible():
+            return False
+        if not topbar.rect().contains(topbar.mapFromGlobal(global_pos)):
+            return False
+        for widget in getattr(self, "_title_controls", set()):
+            if widget.isVisible() and widget.rect().contains(widget.mapFromGlobal(global_pos)):
+                return False
+        return True
+
+    def _hit_test_edges(self, global_pos: QPoint) -> Qt.Edges:
+        if self.windowState() & Qt.WindowMaximized:
+            return Qt.Edges()
+        pos = self.mapFromGlobal(global_pos)
+        rect = self.rect()
+        margin = max(1, int(getattr(self, "_resize_margin", 6)))
+        edges = Qt.Edges()
+        if pos.x() <= margin:
+            edges |= Qt.LeftEdge
+        elif pos.x() >= rect.width() - margin:
+            edges |= Qt.RightEdge
+        if pos.y() <= margin:
+            edges |= Qt.TopEdge
+        elif pos.y() >= rect.height() - margin:
+            edges |= Qt.BottomEdge
+        return edges
+
+    def _update_resize_cursor(self, edges: Qt.Edges) -> None:
+        if edges == self._resize_edges:
+            return
+        self._resize_edges = edges
+        if not edges:
+            self.unsetCursor()
+            return
+        if edges in (Qt.LeftEdge | Qt.TopEdge, Qt.RightEdge | Qt.BottomEdge):
+            self.setCursor(Qt.SizeFDiagCursor)
+        elif edges in (Qt.RightEdge | Qt.TopEdge, Qt.LeftEdge | Qt.BottomEdge):
+            self.setCursor(Qt.SizeBDiagCursor)
+        elif edges in (Qt.LeftEdge, Qt.RightEdge):
+            self.setCursor(Qt.SizeHorCursor)
+        else:
+            self.setCursor(Qt.SizeVerCursor)
+
+    def nativeEvent(self, eventType, message):  # noqa: N802 - Qt naming
+        if not getattr(self, "_use_native_frame", False):
+            return super().nativeEvent(eventType, message)
+        if eventType not in ("windows_generic_MSG", "windows_dispatcher_MSG"):
+            return super().nativeEvent(eventType, message)
+
+        WM_NCHITTEST = 0x0084
+        HTCLIENT = 1
+        HTCAPTION = 2
+        HTLEFT = 10
+        HTRIGHT = 11
+        HTTOP = 12
+        HTTOPLEFT = 13
+        HTTOPRIGHT = 14
+        HTBOTTOM = 15
+        HTBOTTOMLEFT = 16
+        HTBOTTOMRIGHT = 17
+
+        if ctypes.sizeof(ctypes.c_void_p) == 8:
+            wparam_t = ctypes.c_uint64
+            lparam_t = ctypes.c_int64
+        else:
+            wparam_t = ctypes.c_uint32
+            lparam_t = ctypes.c_int32
+
+        class _POINT(ctypes.Structure):
+            _fields_ = [("x", ctypes.c_long), ("y", ctypes.c_long)]
+
+        class _MSG(ctypes.Structure):
+            _fields_ = [
+                ("hwnd", ctypes.c_void_p),
+                ("message", ctypes.c_uint),
+                ("wParam", wparam_t),
+                ("lParam", lparam_t),
+                ("time", ctypes.c_uint32),
+                ("pt", _POINT),
+            ]
+
+        msg = _MSG.from_address(int(message))
+        if msg.message != WM_NCHITTEST:
+            return super().nativeEvent(eventType, message)
+
+        x = ctypes.c_short(msg.lParam & 0xFFFF).value
+        y = ctypes.c_short((msg.lParam >> 16) & 0xFFFF).value
+        global_pos = QPoint(x, y)
+
+        if not self.isVisible():
+            return super().nativeEvent(eventType, message)
+
+        if self.windowState() & Qt.WindowMaximized:
+            if self._is_in_titlebar(global_pos):
+                return True, HTCAPTION
+            return True, HTCLIENT
+
+        pos = self.mapFromGlobal(global_pos)
+        rect = self.rect()
+        margin = max(1, int(getattr(self, "_resize_margin", 6)))
+        left = pos.x() <= margin
+        right = pos.x() >= rect.width() - margin
+        top = pos.y() <= margin
+        bottom = pos.y() >= rect.height() - margin
+
+        if left and top:
+            return True, HTTOPLEFT
+        if right and top:
+            return True, HTTOPRIGHT
+        if left and bottom:
+            return True, HTBOTTOMLEFT
+        if right and bottom:
+            return True, HTBOTTOMRIGHT
+        if top:
+            return True, HTTOP
+        if bottom:
+            return True, HTBOTTOM
+        if left:
+            return True, HTLEFT
+        if right:
+            return True, HTRIGHT
+
+        if self._is_in_titlebar(global_pos):
+            return True, HTCAPTION
+        return True, HTCLIENT
+
     def eventFilter(self, obj, event):  # noqa: N802 - Qt naming
+        if isinstance(obj, QWidget) and obj.window() is self:
+            if event.type() == QEvent.MouseMove and not (event.buttons() & Qt.LeftButton):
+                edges = self._hit_test_edges(event.globalPosition().toPoint())
+                self._update_resize_cursor(edges)
+            if event.type() == QEvent.MouseButtonPress and event.button() == Qt.LeftButton:
+                edges = self._hit_test_edges(event.globalPosition().toPoint())
+                if edges:
+                    window = self.windowHandle()
+                    if window and hasattr(window, "startSystemResize"):
+                        if window.startSystemResize(edges):
+                            return True
         if obj in getattr(self, "_drag_widgets", set()):
             if event.type() == QEvent.MouseButtonDblClick and event.button() == Qt.LeftButton:
                 self._drag_active = False
                 self._toggle_maximize()
                 return True
             if event.type() == QEvent.MouseButtonPress and event.button() == Qt.LeftButton:
+                edges = self._hit_test_edges(event.globalPosition().toPoint())
+                if edges:
+                    window = self.windowHandle()
+                    if window and hasattr(window, "startSystemResize"):
+                        if window.startSystemResize(edges):
+                            return True
                 self._drag_active = True
                 self._drag_offset = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
                 return True
@@ -2283,13 +2462,23 @@ class MainWindow(QMainWindow):
 
     def changeEvent(self, event):  # noqa: N802 - Qt naming
         if event.type() == QEvent.WindowStateChange:
+            self._apply_pending_geometry()
             self._update_maximize_icon()
         super().changeEvent(event)
 
     def _toggle_maximize(self) -> None:
         if self.windowState() & Qt.WindowMaximized:
+            normal = self.normalGeometry()
+            target = None
+            if normal.isValid() and normal.width() > 0 and normal.height() > 0:
+                target = normal
+            elif self._normal_geometry is not None:
+                target = self._normal_geometry
+            self._pending_normal_geometry = target
             self.showNormal()
+            QTimer.singleShot(0, self._apply_pending_geometry)
         else:
+            self._store_normal_geometry()
             self.showMaximized()
         self._update_maximize_icon()
 

@@ -6,7 +6,7 @@ import threading
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
-from PySide6.QtCore import QAbstractAnimation, QPropertyAnimation, QSize, Qt, QSettings, QTimer
+from PySide6.QtCore import QAbstractAnimation, QPropertyAnimation, QSize, Qt, QSettings, QTimer, QRect
 from PySide6.QtGui import QColor, QImage, QPainter, QPixmap
 from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import QApplication, QGraphicsOpacityEffect, QSplashScreen
@@ -121,11 +121,39 @@ def main() -> int:
     window = MainWindow(store)
     window.setWindowIcon(icon)
 
-    if settings.contains("geometry"):
+    def _parse_rect(value) -> QRect | None:
+        if value is None:
+            return None
         try:
-            window.restoreGeometry(settings.value("geometry"))
+            if isinstance(value, (list, tuple)) and len(value) >= 4:
+                x, y, w, h = (int(value[0]), int(value[1]), int(value[2]), int(value[3]))
+                if w > 0 and h > 0:
+                    return QRect(x, y, w, h)
+            if isinstance(value, str):
+                parts = [p for p in value.replace(";", ",").split(",") if p.strip()]
+                if len(parts) >= 4:
+                    x, y, w, h = (int(parts[0]), int(parts[1]), int(parts[2]), int(parts[3]))
+                    if w > 0 and h > 0:
+                        return QRect(x, y, w, h)
         except Exception:
-            pass
+            return None
+        return None
+
+    def _default_rect() -> QRect:
+        screen = app.primaryScreen()
+        if screen is None:
+            return QRect(100, 100, 1100, 760)
+        avail = screen.availableGeometry()
+        width = min(1180, max(860, avail.width() - 120))
+        height = min(820, max(600, avail.height() - 120))
+        x = avail.x() + max(0, (avail.width() - width) // 2)
+        y = avail.y() + max(0, (avail.height() - height) // 2)
+        return QRect(x, y, width, height)
+
+    rect = _parse_rect(settings.value("window_rect")) if settings.contains("window_rect") else None
+    if rect is None:
+        rect = _default_rect()
+    window.setGeometry(rect)
 
     if splash:
         splash.showMessage(
@@ -188,7 +216,19 @@ def main() -> int:
                     network.register_cached_file(file_id, str(cache_path))
 
     def save_geometry() -> None:
-        settings.setValue("geometry", window.saveGeometry())
+        rect = window.geometry()
+        if window.windowState() & Qt.WindowMaximized:
+            normal = window.normalGeometry()
+            if normal.isValid() and normal.width() > 0 and normal.height() > 0:
+                rect = normal
+        if not rect.isValid() or rect.width() <= 0 or rect.height() <= 0:
+            return
+        settings.setValue(
+            "window_rect",
+            f"{rect.x()},{rect.y()},{rect.width()},{rect.height()}",
+        )
+        if settings.contains("geometry"):
+            settings.remove("geometry")
 
     tray = None
     api_lock = threading.Lock()
