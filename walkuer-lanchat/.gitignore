@@ -4,6 +4,7 @@
 # Build-Artefakte
 dist/
 build/
+WalkuerLanChat.spec
 
 # Python Cache
 __pycache__/
