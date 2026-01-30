@@ -4,6 +4,23 @@
   <img src="assets/hero.svg" alt="Walkür LAN Chat Header" width="100%" />
   <p><strong>Global LAN chat for Windows - clicky-colorful, fast, no server.</strong></p>
   <p>Walkür Technology · Strategus One · Silvan Fülle</p>
+
+  <hr>
+  <p align="center">
+    <a href="https://github.com/PrivTEC/Walkuer_Lan_Chat/releases/tag/v1.0.0"
+      style="color:#3fb950; text-decoration:none;">
+      <strong style="font-size:1.3em; letter-spacing:0.5px;">
+        ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓<br>
+        ┃ ⬇ DOWNLOAD WINDOWS EXE v1.0.0 ┃<br>
+        ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+      </strong>
+    </a>
+  </p>
+  <p align="center">
+    Single-file executable · No installer · No server · No cloud
+  </p>
+  <hr>
+
   <p>
     <a href="API.md">API</a> ·
     <a href="#features">Features</a> ·
