@@ -18,6 +18,9 @@ if not exist build (
 set "ICON_ARG="
 if exist build\walkuer.ico set "ICON_ARG=--icon build\walkuer.ico"
 
-.venv\Scripts\python.exe -m PyInstaller --noconsole --onefile --name WalkuerLanChat %ICON_ARG% --add-data "src\assets\splash.svg;assets" src\main.py
+.venv\Scripts\python.exe -m PyInstaller --noconsole --onefile --name WalkuerLanChat %ICON_ARG% ^
+  --add-data "src\assets\splash.svg;assets" ^
+  --add-data "src\lang;lang" ^
+  src\main.py
 
 echo Build OK: dist\WalkuerLanChat.exe
