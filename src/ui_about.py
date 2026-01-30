@@ -5,12 +5,13 @@ from PySide6.QtGui import QFont
 from PySide6.QtWidgets import QDialog, QGraphicsDropShadowEffect, QLabel, QVBoxLayout
 
 import app_info
+from util.i18n import t
 
 
 class AboutDialog(QDialog):
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Über")
+        self.setWindowTitle(t("about.title"))
         self.setModal(True)
         self.setMinimumWidth(420)
 
@@ -18,7 +19,7 @@ class AboutDialog(QDialog):
         layout.setSpacing(14)
         layout.setContentsMargins(14, 12, 14, 12)
 
-        title = QLabel("Walkür Technology")
+        title = QLabel(t("about.header"))
         title.setObjectName("headerTitle")
         title.setAlignment(Qt.AlignCenter)
         glow = QGraphicsDropShadowEffect(self)
@@ -27,25 +28,13 @@ class AboutDialog(QDialog):
         glow.setOffset(0, 0)
         title.setGraphicsEffect(glow)
 
-        info_box = QLabel(
-            """
-#############################
-Name: Silvan Fülle
-Firma: Walkür Technology
-Web: https://walkuer.tech
-Git: https://github.com/PrivTEC
-App: Walkür LAN Chat
-Zweck: Schneller Info-Austausch im Intranet (globaler Chat + Dateitransfer)
-Bedienung: Schreiben, Senden, Dateien ziehen, Tray für Hintergrundbetrieb
-#############################
-""".strip()
-        )
+        info_box = QLabel(t("about.info"))
         info_box.setObjectName("aboutBox")
         info_box.setAlignment(Qt.AlignCenter)
         font = QFont("Consolas", 9)
         info_box.setFont(font)
 
-        version = QLabel(f"Version {app_info.VERSION}")
+        version = QLabel(t("about.version", version=app_info.VERSION))
         version.setAlignment(Qt.AlignCenter)
 
         layout.addWidget(title)

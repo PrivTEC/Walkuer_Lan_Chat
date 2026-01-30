@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
 from config_store import ConfigStore
 from theme import DEFAULT_THEME, THEME_CHOICES
 from util.images import load_avatar_pixmap
+from util.i18n import available_languages, set_language, t
 
 
 class SettingsDialog(QDialog):
@@ -31,7 +32,7 @@ class SettingsDialog(QDialog):
         self._force = force
         self._api_url = api_url
 
-        self.setWindowTitle("Einstellungen")
+        self.setWindowTitle(t("settings.title"))
         self.setModal(True)
         self.setMinimumWidth(420)
         if force:
@@ -41,10 +42,10 @@ class SettingsDialog(QDialog):
         layout.setSpacing(12)
         layout.setContentsMargins(14, 12, 14, 12)
 
-        name_label = QLabel("Username")
+        name_label = QLabel(t("settings.username"))
         self.name_input = QLineEdit(store.config.user_name)
 
-        avatar_label = QLabel("Avatar")
+        avatar_label = QLabel(t("settings.avatar"))
         self.avatar_preview = QLabel()
         self.avatar_preview.setObjectName("avatarPreview")
         self.avatar_preview.setFixedSize(72, 72)
@@ -53,14 +54,14 @@ class SettingsDialog(QDialog):
         self._refresh_preview()
 
         avatar_buttons = QHBoxLayout()
-        choose_btn = QPushButton("Bild wählen...")
-        remove_btn = QPushButton("Avatar entfernen")
+        choose_btn = QPushButton(t("settings.avatar_choose"))
+        remove_btn = QPushButton(t("settings.avatar_remove"))
         choose_btn.clicked.connect(self._choose_avatar)
         remove_btn.clicked.connect(self._remove_avatar)
         avatar_buttons.addWidget(choose_btn)
         avatar_buttons.addWidget(remove_btn)
 
-        theme_label = QLabel("Theme")
+        theme_label = QLabel(t("settings.theme"))
         self.theme_select = QComboBox()
         self.theme_select.addItems(THEME_CHOICES)
         current_theme = store.config.theme or DEFAULT_THEME
@@ -69,10 +70,22 @@ class SettingsDialog(QDialog):
             index = 0
         self.theme_select.setCurrentIndex(index)
 
-        chat_bg_label = QLabel("Chat Hintergrund")
+        language_label = QLabel(t("settings.language"))
+        self.language_select = QComboBox()
+        self._language_codes: list[str] = []
+        for code, name in available_languages():
+            self._language_codes.append(code)
+            self.language_select.addItem(name)
+        current_lang = store.config.language or "de-DE"
+        if current_lang in self._language_codes:
+            self.language_select.setCurrentIndex(self._language_codes.index(current_lang))
+
+        chat_bg_label = QLabel(t("settings.chat_bg"))
         self.chat_bg_mode = QComboBox()
         self._bg_mode_values = ["off", "color", "image"]
-        self.chat_bg_mode.addItems(["Aus", "Farbe", "Bild"])
+        self.chat_bg_mode.addItems(
+            [t("settings.chat_bg_off"), t("settings.chat_bg_color"), t("settings.chat_bg_image")]
+        )
         current_mode = store.config.chat_bg_mode or "off"
         if current_mode in self._bg_mode_values:
             self.chat_bg_mode.setCurrentIndex(self._bg_mode_values.index(current_mode))
@@ -86,40 +99,42 @@ class SettingsDialog(QDialog):
 
         self.chat_bg_image_path = QLineEdit(store.config.chat_bg_image_path or "")
         self.chat_bg_image_path.setReadOnly(True)
-        self.chat_bg_image_btn = QPushButton("Bild wählen...")
+        self.chat_bg_image_btn = QPushButton(t("settings.chat_bg_choose"))
         self.chat_bg_image_btn.clicked.connect(self._choose_chat_bg_image)
 
         self.chat_bg_opacity = QSlider(Qt.Horizontal)
         self.chat_bg_opacity.setRange(0, 100)
         self.chat_bg_opacity.setValue(int(store.config.chat_bg_opacity or 12))
-        self.chat_bg_opacity_label = QLabel(f"Fade: {self.chat_bg_opacity.value()}%")
+        self.chat_bg_opacity_label = QLabel(
+            t("settings.opacity_label", value=self.chat_bg_opacity.value())
+        )
         self.chat_bg_opacity.valueChanged.connect(
-            lambda v: self.chat_bg_opacity_label.setText(f"Fade: {v}%")
+            lambda v: self.chat_bg_opacity_label.setText(t("settings.opacity_label", value=v))
         )
 
-        self.sound_toggle = QCheckBox("Sound bei neuen Nachrichten")
+        self.sound_toggle = QCheckBox(t("settings.sound_toggle"))
         self.sound_toggle.setChecked(store.config.sound_enabled)
 
-        self.tray_toggle = QCheckBox("Tray-Popups")
+        self.tray_toggle = QCheckBox(t("settings.tray_toggle"))
         self.tray_toggle.setChecked(store.config.tray_notifications)
 
-        self.expert_toggle = QCheckBox("Expertenmodus (API-Einstellungen anzeigen)")
+        self.expert_toggle = QCheckBox(t("settings.expert_toggle"))
         self.expert_toggle.setChecked(store.config.expert_mode)
 
-        api_label = QLabel("Lokale API")
-        self.api_toggle = QCheckBox("API aktivieren (localhost)")
+        api_label = QLabel(t("settings.api_section"))
+        self.api_toggle = QCheckBox(t("settings.api_toggle"))
         self.api_toggle.setChecked(store.config.api_enabled)
 
-        api_url_label = QLabel("API URL")
+        api_url_label = QLabel(t("settings.api_url"))
         self.api_url_value = QLineEdit(api_url or "http://127.0.0.1:<port>/api/v1/")
         self.api_url_value.setReadOnly(True)
 
-        api_token_label = QLabel("API Token")
+        api_token_label = QLabel(t("settings.api_token"))
         self.api_token_value = QLineEdit(store.config.api_token)
         self.api_token_value.setReadOnly(True)
         token_row = QHBoxLayout()
         token_row.addWidget(self.api_token_value, 1)
-        token_regen = QPushButton("Token neu")
+        token_regen = QPushButton(t("settings.api_token_regen"))
         token_regen.clicked.connect(self._regen_api_token)
         token_row.addWidget(token_regen)
 
@@ -134,7 +149,7 @@ class SettingsDialog(QDialog):
         api_layout.addWidget(api_token_label)
         api_layout.addLayout(token_row)
 
-        save_btn = QPushButton("Speichern")
+        save_btn = QPushButton(t("common.save"))
         save_btn.setObjectName("primaryButton")
         save_btn.clicked.connect(self._save)
 
@@ -145,14 +160,16 @@ class SettingsDialog(QDialog):
         layout.addLayout(avatar_buttons)
         layout.addWidget(theme_label)
         layout.addWidget(self.theme_select)
+        layout.addWidget(language_label)
+        layout.addWidget(self.language_select)
         layout.addWidget(chat_bg_label)
         layout.addWidget(self.chat_bg_mode)
 
-        self.chat_bg_color_label = QLabel("Farbe")
+        self.chat_bg_color_label = QLabel(t("settings.chat_bg_color_label"))
         layout.addWidget(self.chat_bg_color_label)
         layout.addWidget(self.chat_bg_color_btn)
 
-        self.chat_bg_image_label = QLabel("Bild")
+        self.chat_bg_image_label = QLabel(t("settings.chat_bg_image_label"))
         layout.addWidget(self.chat_bg_image_label)
         layout.addWidget(self.chat_bg_image_path)
         layout.addWidget(self.chat_bg_image_btn)
@@ -167,7 +184,7 @@ class SettingsDialog(QDialog):
         layout.addWidget(save_btn, alignment=Qt.AlignRight)
 
         if not force:
-            cancel_btn = QPushButton("Abbrechen")
+            cancel_btn = QPushButton(t("common.cancel"))
             cancel_btn.clicked.connect(self.reject)
             layout.addWidget(cancel_btn, alignment=Qt.AlignRight)
 
@@ -190,9 +207,9 @@ class SettingsDialog(QDialog):
     def _choose_avatar(self) -> None:
         file_path, _ = QFileDialog.getOpenFileName(
             self,
-            "Avatar wählen",
+            t("settings.avatar_choose_title"),
             "",
-            "Images (*.png *.jpg *.jpeg *.bmp *.gif)"
+            t("settings.images_filter")
         )
         if file_path:
             self._pending_avatar = file_path
@@ -219,9 +236,9 @@ class SettingsDialog(QDialog):
     def _choose_chat_bg_image(self) -> None:
         file_path, _ = QFileDialog.getOpenFileName(
             self,
-            "Chat-Hintergrund wählen",
+            t("settings.chat_bg_choose_title"),
             "",
-            "Images (*.png *.jpg *.jpeg *.bmp *.webp)"
+            t("settings.images_filter")
         )
         if file_path:
             self.chat_bg_image_path.setText(file_path)
@@ -242,9 +259,11 @@ class SettingsDialog(QDialog):
         self.chat_bg_opacity_label.setEnabled(is_color or is_image)
 
     def _save(self) -> None:
-        name = self.name_input.text().strip() or "User"
+        name = self.name_input.text().strip() or t("user.default_name")
         self._store.config.user_name = name
         self._store.config.theme = self.theme_select.currentText()
+        if self._language_codes:
+            self._store.config.language = self._language_codes[self.language_select.currentIndex()]
         self._store.config.sound_enabled = self.sound_toggle.isChecked()
         self._store.config.tray_notifications = self.tray_toggle.isChecked()
         self._store.config.api_enabled = self.api_toggle.isChecked()
@@ -262,9 +281,12 @@ class SettingsDialog(QDialog):
                 self._store.set_avatar_from_path(self._pending_avatar)
 
         self._store.save()
+        set_language(self._store.config.language)
         parent = self.parent()
         if parent is not None and hasattr(parent, "_apply_chat_background_from_config"):
             parent._apply_chat_background_from_config()
+        if parent is not None and hasattr(parent, "apply_translations"):
+            parent.apply_translations()
         self.saved.emit()
         self.accept()
 

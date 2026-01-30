@@ -4,31 +4,33 @@ from PySide6.QtCore import QObject, QTimer, Qt
 from PySide6.QtGui import QAction, QIcon
 from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
+from util.i18n import t
+
 
 class TrayManager(QObject):
     def __init__(self, icon: QIcon, parent, on_open, on_settings, on_about, on_quit) -> None:
         super().__init__(parent)
         self._tray = QSystemTrayIcon(icon, parent)
-        self._tray.setToolTip("Walkür LAN Chat")
+        self._tray.setToolTip(t("tray.tooltip"))
         self._notify_queue: list[tuple[str, str]] = []
         self._notify_active = False
 
         menu = QMenu()
-        open_action = QAction("Öffnen", menu)
-        settings_action = QAction("Einstellungen", menu)
-        about_action = QAction("Über", menu)
-        quit_action = QAction("Beenden", menu)
+        self._open_action = QAction(t("tray.open"), menu)
+        self._settings_action = QAction(t("tray.settings"), menu)
+        self._about_action = QAction(t("tray.about"), menu)
+        self._quit_action = QAction(t("tray.quit"), menu)
 
-        open_action.triggered.connect(on_open)
-        settings_action.triggered.connect(on_settings)
-        about_action.triggered.connect(on_about)
-        quit_action.triggered.connect(on_quit)
+        self._open_action.triggered.connect(on_open)
+        self._settings_action.triggered.connect(on_settings)
+        self._about_action.triggered.connect(on_about)
+        self._quit_action.triggered.connect(on_quit)
 
-        menu.addAction(open_action)
-        menu.addAction(settings_action)
-        menu.addAction(about_action)
+        menu.addAction(self._open_action)
+        menu.addAction(self._settings_action)
+        menu.addAction(self._about_action)
         menu.addSeparator()
-        menu.addAction(quit_action)
+        menu.addAction(self._quit_action)
 
         self._tray.setContextMenu(menu)
         self._tray.activated.connect(self._on_activated)
@@ -61,7 +63,7 @@ class TrayManager(QObject):
             self._process_queue()
 
     def _deliver_message(self, title: str, message: str) -> None:
-        safe_title = (title or "").strip() or "Walkuer LAN Chat"
+        safe_title = (title or "").strip() or t("tray.default_title")
         safe_message = (message or "").strip()
         if QSystemTrayIcon.supportsMessages():
             self._tray.showMessage(safe_title, safe_message, QSystemTrayIcon.Information, 6000)
@@ -73,3 +75,10 @@ class TrayManager(QObject):
 
     def hide(self) -> None:
         self._tray.hide()
+
+    def apply_translations(self) -> None:
+        self._tray.setToolTip(t("tray.tooltip"))
+        self._open_action.setText(t("tray.open"))
+        self._settings_action.setText(t("tray.settings"))
+        self._about_action.setText(t("tray.about"))
+        self._quit_action.setText(t("tray.quit"))

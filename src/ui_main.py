@@ -47,6 +47,7 @@ import theme as theme_mod
 from config_store import ConfigStore
 from net import protocol
 from util.images import load_avatar_pixmap, generate_qr_pixmap
+from util.i18n import t
 from util.markdown_render import render_markdown, extract_first_url
 from util.paths import attachment_cache_path, downloads_dir, logs_dir
 from util.timefmt import fmt_time, fmt_time_seconds
@@ -396,7 +397,7 @@ class ClickableFrame(QFrame):
 class ImagePreviewDialog(QDialog):
     def __init__(self, image_path: str, parent=None) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Bildvorschau")
+        self.setWindowTitle(t("preview.title"))
         self.setModal(True)
 
         layout = QVBoxLayout(self)
@@ -419,7 +420,7 @@ class ImagePreviewDialog(QDialog):
             label.setPixmap(scaled)
             self.resize(scaled.width() + 20, scaled.height() + 20)
         else:
-            label.setText("Vorschau nicht verfügbar")
+            label.setText(t("preview.unavailable"))
             self.resize(max_w, max_h)
 
         layout.addWidget(label)
@@ -439,6 +440,7 @@ class UserListItem(QFrame):
         self.sender_id = sender_id
         self.avatar_sha = avatar_sha
         self._is_self = is_self
+        self._raw_name = name or ""
         self.setObjectName("userItemSelf" if is_self else "userItem")
 
         layout = QHBoxLayout(self)
@@ -476,21 +478,23 @@ class UserListItem(QFrame):
         last_seen: float,
     ) -> None:
         self.avatar_sha = avatar_sha
-        label = name or "User"
+        raw_name = name or t("user.unknown")
+        self._raw_name = raw_name
+        label = raw_name
         if self._is_self:
-            label = f"{label} (Du)"
+            label = t("user.self", name=raw_name)
         self._name_label.setText(label)
 
         pixmap = load_avatar_pixmap(avatar_path, name, avatar_sha, 28)
         self._avatar.setPixmap(pixmap)
 
         if typing:
-            self._status_label.setText("tippt...")
+            self._status_label.setText(t("user.typing"))
             self._status_label.setObjectName("userStatusTyping")
         else:
             time_stamp = fmt_time_seconds(last_seen) if last_seen else ""
-            suffix = f" · {time_stamp}" if time_stamp else ""
-            self._status_label.setText(f"online{suffix}")
+            suffix = t("user.last_seen", time=time_stamp) if time_stamp else ""
+            self._status_label.setText(t("user.online") + suffix)
             self._status_label.setObjectName("userStatus")
         self._status_label.style().unpolish(self._status_label)
         self._status_label.style().polish(self._status_label)
@@ -499,6 +503,9 @@ class UserListItem(QFrame):
         self.avatar_sha = avatar_sha
         pixmap = load_avatar_pixmap(avatar_path, name, avatar_sha, 28)
         self._avatar.setPixmap(pixmap)
+
+    def raw_name(self) -> str:
+        return self._raw_name
 
 
 class ChatBubble(QFrame):
@@ -529,6 +536,9 @@ class ChatBubble(QFrame):
         self._qr_url: str | None = None
         self._qr_btn: QToolButton | None = None
         self._qr_visible = False
+        self._reply_btn: QToolButton | None = None
+        self._react_btn: QToolButton | None = None
+        self._reply_name_label: QLabel | None = None
         self._reply_preview: QLabel | None = None
         self._time_label: QLabel | None = None
         self._link_preview_card: ClickableFrame | None = None
@@ -543,6 +553,8 @@ class ChatBubble(QFrame):
         self._progress: QProgressBar | None = None
         self._retry_btn: QPushButton | None = None
         self._download_btn: QPushButton | None = None
+        self._file_status_key = "file.ready"
+        self._download_pct: int | None = None
 
         self.setObjectName("chatBubbleSelf" if is_self else "chatBubble")
         self.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Minimum)
@@ -562,35 +574,35 @@ class ChatBubble(QFrame):
         header = QHBoxLayout()
         header.setContentsMargins(0, 0, 0, 0)
 
-        name_label = QLabel(msg.get("name") or "?")
+        name_label = QLabel(msg.get("name") or t("user.unknown"))
         name_label.setObjectName("nameLabel")
         self._time_label = QLabel(fmt_time(msg.get("ts") or 0))
         self._time_label.setObjectName("timeLabel")
 
-        reply_btn = QToolButton()
-        reply_btn.setObjectName("replyButton")
-        reply_btn.setText("↩")
-        reply_btn.setToolTip("Antworten")
-        reply_btn.clicked.connect(lambda: self.reply_requested.emit(self.msg))
+        self._reply_btn = QToolButton()
+        self._reply_btn.setObjectName("replyButton")
+        self._reply_btn.setText("↩")
+        self._reply_btn.setToolTip(t("chat.reply"))
+        self._reply_btn.clicked.connect(lambda: self.reply_requested.emit(self.msg))
 
-        react_btn = QToolButton()
-        react_btn.setObjectName("reactionButton")
-        react_btn.setText("★")
-        react_btn.setToolTip("Reagieren")
-        react_btn.clicked.connect(self._open_reaction_menu)
+        self._react_btn = QToolButton()
+        self._react_btn.setObjectName("reactionButton")
+        self._react_btn.setText("★")
+        self._react_btn.setToolTip(t("chat.react"))
+        self._react_btn.clicked.connect(self._open_reaction_menu)
 
         self._qr_btn = QToolButton()
         self._qr_btn.setObjectName("qrToggleButton")
         self._qr_btn.setText("QR")
-        self._qr_btn.setToolTip("QR-Code anzeigen")
+        self._qr_btn.setToolTip(t("qr.show"))
         self._qr_btn.clicked.connect(self._toggle_qr)
         self._qr_btn.hide()
 
         header.addWidget(name_label)
         header.addStretch(1)
         header.addWidget(self._qr_btn)
-        header.addWidget(reply_btn)
-        header.addWidget(react_btn)
+        header.addWidget(self._reply_btn)
+        header.addWidget(self._react_btn)
         body.addLayout(header)
 
         reply_to = msg.get("reply_to")
@@ -601,8 +613,8 @@ class ChatBubble(QFrame):
             reply_layout = QVBoxLayout(reply_box)
             reply_layout.setContentsMargins(8, 6, 8, 6)
             reply_layout.setSpacing(2)
-            reply_name = QLabel(msg.get("reply_name") or "Antwort")
-            reply_name.setObjectName("replyName")
+            self._reply_name_label = QLabel(msg.get("reply_name") or t("chat.reply_label"))
+            self._reply_name_label.setObjectName("replyName")
             self._reply_preview = QLabel()
             self._reply_preview.setObjectName("replyPreview")
             self._reply_preview.setText(_trim_text(msg.get("reply_preview") or ""))
@@ -610,7 +622,7 @@ class ChatBubble(QFrame):
             self._reply_preview.setMinimumWidth(0)
             self._reply_preview.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
             self._update_reply_preview_height()
-            reply_layout.addWidget(reply_name)
+            reply_layout.addWidget(self._reply_name_label)
             reply_layout.addWidget(self._reply_preview)
             body.addWidget(reply_box)
             body.addSpacing(self.REPLY_GAP_PX)
@@ -675,12 +687,13 @@ class ChatBubble(QFrame):
             self._progress.hide()
 
             action_row = QHBoxLayout()
-            self._file_status = QLabel("Bereit")
+            self._file_status_key = "file.ready"
+            self._file_status = QLabel(t(self._file_status_key))
             self._file_status.setObjectName("fileStatus")
-            self._download_btn = QPushButton("Download")
+            self._download_btn = QPushButton(t("file.download"))
             self._download_btn.setObjectName("downloadButton")
             self._download_btn.clicked.connect(lambda: self.download_requested.emit(msg))
-            self._retry_btn = QPushButton("Erneut")
+            self._retry_btn = QPushButton(t("file.retry"))
             self._retry_btn.setObjectName("retryButton")
             self._retry_btn.clicked.connect(lambda: self.download_requested.emit(msg))
             self._retry_btn.hide()
@@ -715,6 +728,30 @@ class ChatBubble(QFrame):
     def resizeEvent(self, event):  # noqa: N802 - Qt naming
         super().resizeEvent(event)
         self._update_reply_preview_height()
+
+    def apply_translations(self) -> None:
+        if self._reply_btn is not None:
+            self._reply_btn.setToolTip(t("chat.reply"))
+        if self._react_btn is not None:
+            self._react_btn.setToolTip(t("chat.react"))
+        if self._qr_btn is not None:
+            self._qr_btn.setToolTip(t("qr.show"))
+        if self._link_preview_qr_btn is not None:
+            self._link_preview_qr_btn.setToolTip(t("qr.show"))
+        if self._reply_name_label is not None and not self.msg.get("reply_name"):
+            self._reply_name_label.setText(t("chat.reply_label"))
+        if self._download_btn is not None:
+            self._download_btn.setText(t("file.download"))
+        if self._retry_btn is not None:
+            self._retry_btn.setText(t("file.retry"))
+        if self._file_status is not None:
+            if self._file_status_key == "download.loading" and self._download_pct is not None:
+                self._file_status.setText(t("download.loading_progress", percent=self._download_pct))
+            else:
+                self._file_status.setText(t(self._file_status_key))
+        self._set_text_content(self.msg.get("text") or "", bool(self.msg.get("deleted")))
+        self._update_time_label()
+        self._refresh_qr_buttons(bool(self._qr_url))
 
     def paintEvent(self, event):  # noqa: N802 - Qt naming
         # Tail is painted here so it remains part of the bubble contour without extra widgets.
@@ -785,17 +822,17 @@ class ChatBubble(QFrame):
 
     def _show_context_menu(self, global_pos) -> None:
         menu = QMenu(self)
-        copy_action = menu.addAction("Kopieren")
+        copy_action = menu.addAction(t("menu.copy"))
         edit_action = None
         undo_action = None
         pin_action = None
         if self._is_self and not self.msg.get("deleted") and self.msg.get("t") == "CHAT":
-            edit_action = menu.addAction("Bearbeiten")
-            undo_action = menu.addAction("Rückgängig")
+            edit_action = menu.addAction(t("menu.edit"))
+            undo_action = menu.addAction(t("menu.undo"))
         if self._pinned:
-            pin_action = menu.addAction("Pin lösen")
+            pin_action = menu.addAction(t("menu.unpin"))
         else:
-            pin_action = menu.addAction("Anpinnen")
+            pin_action = menu.addAction(t("menu.pin"))
         action = menu.exec(global_pos)
         if action == copy_action:
             self._copy_to_clipboard()
@@ -812,20 +849,26 @@ class ChatBubble(QFrame):
     def refresh_avatar(self, avatar_path: str, avatar_sha: str) -> None:
         return
 
-    def set_download_status(self, text: str) -> None:
+    def set_download_status(self, key: str) -> None:
+        self._file_status_key = key
+        if key != "download.loading":
+            self._download_pct = None
+        text = t(key)
         if self._file_status is not None:
             self._file_status.setText(text)
         if self._download_btn is not None:
-            self._download_btn.setEnabled(text != "Lädt...")
+            self._download_btn.setEnabled(key != "download.loading")
         if self._retry_btn is not None:
-            self._retry_btn.setVisible(text == "Fehler")
+            self._retry_btn.setVisible(key == "download.error")
         if self._progress is not None:
-            if text.startswith("Lädt"):
+            if key == "download.loading":
                 self._progress.show()
             else:
                 self._progress.hide()
 
     def set_download_progress(self, pct: int) -> None:
+        self._file_status_key = "download.loading"
+        self._download_pct = pct
         if self._progress is not None:
             self._progress.setValue(pct)
             if pct >= 100:
@@ -833,7 +876,7 @@ class ChatBubble(QFrame):
             else:
                 self._progress.show()
         if self._file_status is not None:
-            self._file_status.setText(f"Lädt... {pct}%")
+            self._file_status.setText(t("download.loading_progress", percent=pct))
         if self._download_btn is not None:
             self._download_btn.setEnabled(False)
         if self._retry_btn is not None:
@@ -923,7 +966,7 @@ class ChatBubble(QFrame):
         self._link_preview_qr_btn = QToolButton()
         self._link_preview_qr_btn.setObjectName("linkPreviewQRBtn")
         self._link_preview_qr_btn.setText("QR")
-        self._link_preview_qr_btn.setToolTip("QR-Code anzeigen")
+        self._link_preview_qr_btn.setToolTip(t("qr.show"))
         self._link_preview_qr_btn.clicked.connect(self._toggle_qr)
 
         card_layout.addWidget(self._link_preview_thumb)
@@ -983,13 +1026,17 @@ class ChatBubble(QFrame):
             return
         self._link_preview_thumb.setText(text)
         self._link_preview_thumb.setAlignment(Qt.AlignCenter)
-        self._link_preview_thumb.setToolTip("Bild wird geladen…")
+        self._link_preview_thumb.setToolTip(t("linkpreview.loading_image"))
         self._link_preview_thumb.show()
 
     def _on_link_preview_thumb_failed(self, _path: str, reason: str) -> None:
         if not self._link_preview_thumb:
             return
-        message = f"Thumbnail nicht verfügbar: {reason}" if reason else "Thumbnail nicht verfügbar"
+        message = (
+            t("linkpreview.thumbnail_unavailable_reason", reason=reason)
+            if reason
+            else t("linkpreview.thumbnail_unavailable")
+        )
         self._link_preview_thumb.setText("!")
         self._link_preview_thumb.setAlignment(Qt.AlignCenter)
         self._link_preview_thumb.setToolTip(message)
@@ -1004,7 +1051,7 @@ class ChatBubble(QFrame):
         if not self._text_widget:
             return
         if deleted:
-            self._text_widget.setText("<i>Nachricht gelöscht</i>")
+            self._text_widget.setText(t("chat.message_deleted_html"))
             self._text_widget.setObjectName("chatTextMuted")
             self._update_qr_code("")
         else:
@@ -1020,7 +1067,7 @@ class ChatBubble(QFrame):
             return
         label = fmt_time(self.msg.get("ts") or 0)
         if self.msg.get("edited"):
-            label = f"{label} · bearbeitet"
+            label = t("chat.edited_time", time=label)
         self._time_label.setText(label)
 
     def _open_link_preview(self) -> None:
@@ -1030,7 +1077,7 @@ class ChatBubble(QFrame):
         QDesktopServices.openUrl(QUrl(url))
 
     def _refresh_qr_buttons(self, available: bool) -> None:
-        label = "QR-Code ausblenden" if self._qr_visible else "QR-Code anzeigen"
+        label = t("qr.hide") if self._qr_visible else t("qr.show")
         if self._qr_btn is not None:
             self._qr_btn.setVisible(available and not self._has_link_preview)
             self._qr_btn.setToolTip(label)
@@ -1219,41 +1266,41 @@ class MainWindow(QMainWindow):
         else:
             icon_label.setText("W")
 
-        title_label = QLabel("LAN Chat")
-        title_label.setObjectName("appTitle")
+        self._title_label = QLabel(t("app.short_title"))
+        self._title_label.setObjectName("appTitle")
 
         style = self.style()
 
-        settings_btn = QToolButton()
-        settings_btn.setText("⚙")
-        settings_btn.setToolTip("Einstellungen")
-        settings_btn.clicked.connect(self.open_settings)
-        minimize_btn = QToolButton()
-        minimize_btn.setIcon(style.standardIcon(QStyle.SP_TitleBarMinButton))
-        minimize_btn.setIconSize(QSize(12, 12))
-        minimize_btn.setToolTip("Minimieren")
-        minimize_btn.clicked.connect(self.showMinimized)
+        self._settings_btn = QToolButton()
+        self._settings_btn.setText("⚙")
+        self._settings_btn.setToolTip(t("settings.title"))
+        self._settings_btn.clicked.connect(self.open_settings)
+        self._minimize_btn = QToolButton()
+        self._minimize_btn.setIcon(style.standardIcon(QStyle.SP_TitleBarMinButton))
+        self._minimize_btn.setIconSize(QSize(12, 12))
+        self._minimize_btn.setToolTip(t("window.minimize"))
+        self._minimize_btn.clicked.connect(self.showMinimized)
         self._max_btn = QToolButton()
         self._max_btn.setIcon(style.standardIcon(QStyle.SP_TitleBarMaxButton))
         self._max_btn.setIconSize(QSize(12, 12))
-        self._max_btn.setToolTip("Maximieren")
+        self._max_btn.setToolTip(t("window.maximize"))
         self._max_btn.clicked.connect(self._toggle_maximize)
-        close_btn = QToolButton()
-        close_btn.setIcon(style.standardIcon(QStyle.SP_TitleBarCloseButton))
-        close_btn.setIconSize(QSize(12, 12))
-        close_btn.setToolTip("Schließen")
-        close_btn.clicked.connect(self._hide_to_tray)
+        self._close_btn = QToolButton()
+        self._close_btn.setIcon(style.standardIcon(QStyle.SP_TitleBarCloseButton))
+        self._close_btn.setIconSize(QSize(12, 12))
+        self._close_btn.setToolTip(t("common.close"))
+        self._close_btn.clicked.connect(self._hide_to_tray)
 
         top_layout.addWidget(icon_label)
-        top_layout.addWidget(title_label)
+        top_layout.addWidget(self._title_label)
         top_layout.addStretch(1)
-        top_layout.addWidget(settings_btn)
-        top_layout.addWidget(minimize_btn)
+        top_layout.addWidget(self._settings_btn)
+        top_layout.addWidget(self._minimize_btn)
         top_layout.addWidget(self._max_btn)
-        top_layout.addWidget(close_btn)
+        top_layout.addWidget(self._close_btn)
 
         self._topbar = topbar
-        self._title_controls = {settings_btn, minimize_btn, self._max_btn, close_btn}
+        self._title_controls = {self._settings_btn, self._minimize_btn, self._max_btn, self._close_btn}
         self._resize_margin = 6
         self._resize_edges = Qt.Edges()
         self._use_native_frame = False
@@ -1261,21 +1308,21 @@ class MainWindow(QMainWindow):
         self._pending_normal_geometry: QRect | None = None
         self._pending_geometry_attempts = 0
 
-        self._drag_widgets = {topbar, title_label, icon_label}
+        self._drag_widgets = {topbar, self._title_label, icon_label}
         for widget in self._drag_widgets:
             widget.installEventFilter(self)
         app = QApplication.instance()
         if app:
             app.installEventFilter(self)
 
-        header = QLabel("Walkür Technology")
-        header.setObjectName("headerTitle")
-        header.setAlignment(Qt.AlignCenter)
+        self._header_label = QLabel(t("app.org_name"))
+        self._header_label.setObjectName("headerTitle")
+        self._header_label.setAlignment(Qt.AlignCenter)
         glow = QGraphicsDropShadowEffect(self)
         glow.setBlurRadius(14)
         glow.setColor(Qt.green)
         glow.setOffset(0, 0)
-        header.setGraphicsEffect(glow)
+        self._header_label.setGraphicsEffect(glow)
 
         meta_bar = QFrame()
         meta_bar.setObjectName("metaBar")
@@ -1283,13 +1330,13 @@ class MainWindow(QMainWindow):
         meta_layout.setContentsMargins(4, 0, 4, 0)
         meta_layout.setSpacing(8)
 
-        self.online_label = QLabel("Online im LAN: 1")
+        self.online_label = QLabel(t("status.online_count", count=1))
         self.online_label.setObjectName("onlineLabel")
         self.online_label.setAlignment(Qt.AlignLeft)
 
         self.search_input = QLineEdit()
         self.search_input.setObjectName("searchInput")
-        self.search_input.setPlaceholderText("Suche im Chat...")
+        self.search_input.setPlaceholderText(t("search.placeholder"))
         self.search_input.setClearButtonEnabled(True)
         self.search_input.textChanged.connect(self._apply_filter)
 
@@ -1309,8 +1356,8 @@ class MainWindow(QMainWindow):
         user_layout.setContentsMargins(10, 10, 10, 10)
         user_layout.setSpacing(8)
 
-        user_title = QLabel("Online")
-        user_title.setObjectName("userListTitle")
+        self._user_title = QLabel(t("user.list_title"))
+        self._user_title.setObjectName("userListTitle")
 
         self.user_list_area = QScrollArea()
         self.user_list_area.setWidgetResizable(True)
@@ -1323,7 +1370,7 @@ class MainWindow(QMainWindow):
         self.user_list_layout.addStretch(1)
         self.user_list_area.setWidget(self.user_list_container)
 
-        user_layout.addWidget(user_title)
+        user_layout.addWidget(self._user_title)
         user_layout.addWidget(self.user_list_area, 1)
 
         chat_panel = QFrame()
@@ -1382,6 +1429,7 @@ class MainWindow(QMainWindow):
         self.pinned_clear_btn = QToolButton()
         self.pinned_clear_btn.setObjectName("pinnedClear")
         self.pinned_clear_btn.setText("X")
+        self.pinned_clear_btn.setToolTip(t("pin.clear_tooltip"))
         self.pinned_clear_btn.clicked.connect(self._clear_pin)
         pinned_layout.addWidget(self.pinned_label)
         pinned_layout.addStretch(1)
@@ -1469,7 +1517,7 @@ class MainWindow(QMainWindow):
         self.lp_close_btn = QToolButton()
         self.lp_close_btn.setObjectName("lpClose")
         self.lp_close_btn.setText("X")
-        self.lp_close_btn.setToolTip("Vorschau schließen")
+        self.lp_close_btn.setToolTip(t("linkpreview.close"))
         self.lp_close_btn.clicked.connect(self._dismiss_link_preview)
 
         lp_layout.addWidget(self.lp_thumb_label)
@@ -1483,28 +1531,28 @@ class MainWindow(QMainWindow):
         composer_layout.setContentsMargins(8, 8, 8, 8)
         composer_layout.setSpacing(8)
 
-        attach_btn = QPushButton()
-        attach_btn.setObjectName("iconButton")
-        attach_btn.setText("📎")
-        attach_btn.setToolTip("Datei anhängen")
-        attach_btn.setFixedSize(40, 40)
-        attach_btn.clicked.connect(self._choose_files)
+        self._attach_btn = QPushButton()
+        self._attach_btn.setObjectName("iconButton")
+        self._attach_btn.setText("📎")
+        self._attach_btn.setToolTip(t("composer.attach"))
+        self._attach_btn.setFixedSize(40, 40)
+        self._attach_btn.clicked.connect(self._choose_files)
 
         self.text_input = SendTextEdit()
-        self.text_input.setPlaceholderText("Nachricht schreiben...")
+        self.text_input.setPlaceholderText(t("composer.placeholder"))
         self.text_input.setFixedHeight(80)
         self.text_input.setAcceptDrops(False)
         self.text_input.send_requested.connect(self._send_clicked)
         self.text_input.textChanged.connect(self._on_text_changed)
 
-        send_btn = QPushButton("Senden")
-        send_btn.setObjectName("primaryButton")
-        send_btn.setFixedWidth(110)
-        send_btn.clicked.connect(self._send_clicked)
+        self._send_btn = QPushButton(t("composer.send"))
+        self._send_btn.setObjectName("primaryButton")
+        self._send_btn.setFixedWidth(110)
+        self._send_btn.clicked.connect(self._send_clicked)
 
-        composer_layout.addWidget(attach_btn)
+        composer_layout.addWidget(self._attach_btn)
         composer_layout.addWidget(self.text_input, 1)
-        composer_layout.addWidget(send_btn)
+        composer_layout.addWidget(self._send_btn)
 
         chat_layout.addWidget(self.pinned_bar)
         chat_layout.addWidget(self.chat_stack, 1)
@@ -1519,7 +1567,7 @@ class MainWindow(QMainWindow):
         content_layout.addWidget(chat_panel, 1)
 
         root.addWidget(topbar)
-        root.addWidget(header)
+        root.addWidget(self._header_label)
         root.addWidget(meta_bar)
         root.addWidget(content_frame, 1)
 
@@ -1533,6 +1581,52 @@ class MainWindow(QMainWindow):
         self._render_user_list()
         self._update_maximize_icon()
         self._apply_chat_background_from_config()
+
+    def apply_translations(self) -> None:
+        self._title_label.setText(t("app.short_title"))
+        self._header_label.setText(t("app.org_name"))
+        self._settings_btn.setToolTip(t("settings.title"))
+        self._minimize_btn.setToolTip(t("window.minimize"))
+        self._close_btn.setToolTip(t("common.close"))
+        self.pinned_clear_btn.setToolTip(t("pin.clear_tooltip"))
+        self.search_input.setPlaceholderText(t("search.placeholder"))
+        self._user_title.setText(t("user.list_title"))
+        self._attach_btn.setToolTip(t("composer.attach"))
+        self.text_input.setPlaceholderText(t("composer.placeholder"))
+        self._send_btn.setText(t("composer.send"))
+        self.lp_close_btn.setToolTip(t("linkpreview.close"))
+        self._update_maximize_icon()
+
+        count = len([p for p in self._peers if p.get("sender_id") != self._store.config.sender_id]) + 1
+        self.online_label.setText(t("status.online_count", count=count))
+
+        if self._pinned_message:
+            preview = self._pinned_message.get("preview") or ""
+            name = self._pinned_message.get("name") or ""
+            label = t("pin.label_default", preview=preview)
+            if name:
+                label = t("pin.label_named", name=name, preview=preview)
+            self.pinned_label.setText(label)
+
+        if self._reply_target:
+            preview = _trim_text(self._reply_target.get("text") or self._reply_target.get("filename") or "")
+            name = self._reply_target.get("name") or t("user.unknown")
+            self.reply_label.setText(t("reply.label", name=name, preview=preview))
+
+        if self._edit_target:
+            preview = _trim_text(self._edit_target.get("text") or "")
+            self.edit_label.setText(t("edit.label", preview=preview))
+
+        if self.link_preview_bar.isVisible():
+            if self._lp_data:
+                self._render_link_preview_bar(self._lp_data)
+            elif self._lp_current_url:
+                self._set_link_preview_loading(self._lp_current_url)
+
+        self._refresh_attachments()
+        self._render_user_list()
+        for bubble in self._message_bubbles.values():
+            bubble.apply_translations()
 
     def resizeEvent(self, event):  # noqa: N802 - Qt naming
         super().resizeEvent(event)
@@ -1627,12 +1721,12 @@ class MainWindow(QMainWindow):
         self._chat_bg_image.setPixmap(scaled)
 
     def set_online_count(self, count: int) -> None:
-        self.online_label.setText(f"Online im LAN: {count}")
+        self.online_label.setText(t("status.online_count", count=count))
 
     def set_peers(self, peers: list[dict[str, Any]]) -> None:
         self._peers = peers
         other_peers = [p for p in peers if p.get("sender_id") != self._store.config.sender_id]
-        self.online_label.setText(f"Online im LAN: {len(other_peers) + 1}")
+        self.online_label.setText(t("status.online_count", count=len(other_peers) + 1))
         self._render_user_list()
 
     def _render_user_list(self) -> None:
@@ -1756,9 +1850,9 @@ class MainWindow(QMainWindow):
 
     def apply_pin(self, target_id: str, preview: str, name: str) -> None:
         self._pinned_message = {"target_id": target_id, "preview": preview, "name": name}
-        label = f"\U0001F4CC Angepinnt: {preview}"
+        label = t("pin.label_default", preview=preview)
         if name:
-            label = f"\U0001F4CC {name}: {preview}"
+            label = t("pin.label_named", name=name, preview=preview)
         self.pinned_label.setText(label)
         self.pinned_bar.show()
         for bubble in self._message_bubbles.values():
@@ -1797,7 +1891,7 @@ class MainWindow(QMainWindow):
                 avatar_lbl.setPixmap(pixmap)
         item = self._user_items.get(sender_id)
         if item:
-            name = item._name_label.text().replace(" (Du)", "")
+            name = item.raw_name()
             item.refresh_avatar("", avatar_sha, name)
 
     def show_status(self, text: str, timeout_ms: int = 3000) -> None:
@@ -1904,7 +1998,7 @@ class MainWindow(QMainWindow):
     def _set_link_preview_loading(self, url: str) -> None:
         self.link_preview_bar.show()
         self.lp_domain_label.setText(_display_url(url))
-        self.lp_title_label.setText("Vorschau wird geladen…")
+        self.lp_title_label.setText(t("linkpreview.loading"))
         self.lp_desc_label.setText("")
         self.lp_desc_label.hide()
         self.lp_thumb_label.hide()
@@ -1940,13 +2034,17 @@ class MainWindow(QMainWindow):
         self.lp_thumb_label.show()
 
     def _set_link_preview_thumb_loading(self) -> None:
-        self.lp_thumb_label.setText("Bild\nlädt…")
+        self.lp_thumb_label.setText(t("linkpreview.thumb_loading"))
         self.lp_thumb_label.setAlignment(Qt.AlignCenter)
-        self.lp_thumb_label.setToolTip("Bild wird geladen…")
+        self.lp_thumb_label.setToolTip(t("linkpreview.loading_image"))
         self.lp_thumb_label.show()
 
     def _set_link_preview_thumb_error(self, reason: str) -> None:
-        message = f"Thumbnail nicht verfügbar: {reason}" if reason else "Thumbnail nicht verfügbar"
+        message = (
+            t("linkpreview.thumbnail_unavailable_reason", reason=reason)
+            if reason
+            else t("linkpreview.thumbnail_unavailable")
+        )
         self.lp_thumb_label.setText("!")
         self.lp_thumb_label.setAlignment(Qt.AlignCenter)
         self.lp_thumb_label.setToolTip(message)
@@ -2040,8 +2138,8 @@ class MainWindow(QMainWindow):
         self._reply_target = msg
         preview = msg.get("text") or msg.get("filename") or ""
         preview = _trim_text(preview)
-        name = msg.get("name") or "?"
-        self.reply_label.setText(f"Antwort an {name}: {preview}")
+        name = msg.get("name") or t("user.unknown")
+        self.reply_label.setText(t("reply.label", name=name, preview=preview))
         self.reply_bar.show()
 
     def _clear_reply(self) -> None:
@@ -2054,7 +2152,7 @@ class MainWindow(QMainWindow):
         self._clear_reply()
         self._edit_target = msg
         preview = _trim_text(msg.get("text") or "")
-        self.edit_label.setText(f"Bearbeiten: {preview}")
+        self.edit_label.setText(t("edit.label", preview=preview))
         self.edit_bar.show()
         self.text_input.setPlainText(msg.get("text") or "")
         self.text_input.setFocus()
@@ -2113,13 +2211,13 @@ class MainWindow(QMainWindow):
         if self._edit_target:
             target_id = self._edit_target.get("message_id") or ""
             if text and len(text.encode("utf-8")) > protocol.MAX_TEXT_BYTES:
-                self.show_status("Bearbeiten: Nachricht zu lang (max 8 KB).")
+                self.show_status(t("status.edit_too_long"))
                 return
             if target_id and text:
                 self.apply_edit(target_id, text)
                 self.edit_message.emit(target_id, text)
             else:
-                self.show_status("Bearbeiten: Text fehlt.")
+                self.show_status(t("status.edit_missing_text"))
             self.text_input.clear()
             self._clear_edit()
             self._set_typing(False)
@@ -2127,7 +2225,7 @@ class MainWindow(QMainWindow):
         send_text = False
         if text:
             if len(text.encode("utf-8")) > protocol.MAX_TEXT_BYTES:
-                self.show_status("Nachricht zu lang (max 8 KB).")
+                self.show_status(t("status.message_too_long"))
             else:
                 send_text = True
         if send_text:
@@ -2175,7 +2273,7 @@ class MainWindow(QMainWindow):
     def _choose_files(self) -> None:
         from PySide6.QtWidgets import QFileDialog
 
-        files, _ = QFileDialog.getOpenFileNames(self, "Dateien auswählen")
+        files, _ = QFileDialog.getOpenFileNames(self, t("file.choose_files_title"))
         for path in files:
             self._add_attachment(path)
 
@@ -2205,7 +2303,9 @@ class MainWindow(QMainWindow):
                 size = os.path.getsize(path)
             except Exception:
                 size = 0
-            label = QLabel(f"Angehängt: {Path(path).name} ({_format_size(size)})")
+            label = QLabel(
+                t("attachments.label", name=Path(path).name, size=_format_size(size))
+            )
             remove_btn = QToolButton()
             remove_btn.setText("X")
             remove_btn.clicked.connect(lambda _, p=path: self._remove_attachment(p))
@@ -2245,7 +2345,7 @@ class MainWindow(QMainWindow):
         if not target_id:
             return
         if not self._scroll_to_message(target_id):
-            self.show_status("Angepinnte Nachricht nicht gefunden.")
+            self.show_status(t("pin.not_found"))
 
     def _scroll_to_message(self, message_id: str) -> bool:
         bubble = self._message_bubbles.get(message_id)
@@ -2488,10 +2588,10 @@ class MainWindow(QMainWindow):
         style = self.style()
         if self.windowState() & Qt.WindowMaximized:
             self._max_btn.setIcon(style.standardIcon(QStyle.SP_TitleBarNormalButton))
-            self._max_btn.setToolTip("Wiederherstellen")
+            self._max_btn.setToolTip(t("window.restore"))
         else:
             self._max_btn.setIcon(style.standardIcon(QStyle.SP_TitleBarMaxButton))
-            self._max_btn.setToolTip("Maximieren")
+            self._max_btn.setToolTip(t("window.maximize"))
 
     def dragEnterEvent(self, event):  # noqa: N802 - Qt naming
         if event.mimeData().hasUrls():
@@ -2507,7 +2607,7 @@ class MainWindow(QMainWindow):
     def _download_file(self, msg: dict, sender_ip: str) -> None:
         url = msg.get("url") or ""
         if not url:
-            self.show_status("Download fehlgeschlagen: keine URL.")
+            self.show_status(t("download.no_url"))
             return
         parsed = urllib.parse.urlparse(url)
         if not parsed.netloc:
@@ -2519,7 +2619,12 @@ class MainWindow(QMainWindow):
         dest_dir = downloads_dir()
         dest_dir.mkdir(parents=True, exist_ok=True)
         suggested = dest_dir / filename
-        dest_file, _ = QFileDialog.getSaveFileName(self, "Datei speichern", str(suggested), "Alle Dateien (*)")
+        dest_file, _ = QFileDialog.getSaveFileName(
+            self,
+            t("file.save_title"),
+            str(suggested),
+            t("file.all_files_filter"),
+        )
         if not dest_file:
             return
         dest_path = Path(dest_file)
@@ -2533,16 +2638,16 @@ class MainWindow(QMainWindow):
 
                 shutil.copy2(cached_path, dest_path)
                 if bubble:
-                    bubble.set_download_status("Gespeichert")
+                    bubble.set_download_status("download.saved")
                 if _is_image_file(filename):
                     bubble.set_image_preview(str(cached_path))
-                self.status_label.setText(f"Gespeichert: {filename}")
+                self.status_label.setText(t("download.saved_label", name=filename))
                 return
             except Exception:
                 pass
 
         if bubble:
-            bubble.set_download_status("Lädt...")
+            bubble.set_download_status("download.loading")
             bubble.set_download_progress(0)
 
         worker = DownloadWorker(url, str(dest_path), filename)
@@ -2595,20 +2700,20 @@ class MainWindow(QMainWindow):
     def _update_download_progress(self, bubble: ChatBubble | None, name: str, pct: int) -> None:
         if bubble:
             bubble.set_download_progress(pct)
-        self.status_label.setText(f"Lädt: {name} ({pct}%)")
+        self.status_label.setText(t("download.loading_label", name=name, percent=pct))
 
     def _finish_download(self, bubble: ChatBubble | None, name: str, path: str, filename: str) -> None:
         if bubble:
-            bubble.set_download_status("Gespeichert")
+            bubble.set_download_status("download.saved")
             bubble.set_download_progress(100)
             if _is_image_file(filename):
                 bubble.set_image_preview(path)
-        self.status_label.setText(f"Fertig: {name}")
+        self.status_label.setText(t("download.finished_label", name=name))
 
     def _fail_download(self, bubble: ChatBubble | None, name: str) -> None:
         if bubble:
-            bubble.set_download_status("Fehler")
-        self.status_label.setText(f"Fehler: {name}")
+            bubble.set_download_status("download.error")
+        self.status_label.setText(t("download.error_label", name=name))
 
     def _cleanup_worker(self) -> None:
         self._download_threads = [w for w in self._download_threads if w.isRunning()]

@@ -10,6 +10,17 @@ from pathlib import Path
 from util.filehash import sha256_file
 from util.paths import app_data_dir, config_path, ensure_dirs
 
+_LEGACY_LANGUAGE_CODES = {
+    "de_DE": "de-DE",
+    "en_EN": "en-EN",
+}
+
+
+def _normalize_language_code(code: str | None) -> str:
+    if not code:
+        return "de-DE"
+    return _LEGACY_LANGUAGE_CODES.get(code, code)
+
 
 @dataclass
 class AppConfig:
@@ -20,6 +31,7 @@ class AppConfig:
     sound_enabled: bool
     tray_notifications: bool
     theme: str
+    language: str
     api_enabled: bool
     api_token: str
     expert_mode: bool
@@ -45,6 +57,7 @@ class ConfigStore:
             sound_enabled=False,
             tray_notifications=True,
             theme="Standard",
+            language="de-DE",
             api_enabled=True,
             api_token=str(uuid.uuid4()),
             expert_mode=False,
@@ -68,6 +81,7 @@ class ConfigStore:
                     sound_enabled=bool(raw.get("sound_enabled", False)),
                     tray_notifications=bool(raw.get("tray_notifications", True)),
                     theme=raw.get("theme") or "Standard",
+                    language=_normalize_language_code(raw.get("language")),
                     api_enabled=bool(raw.get("api_enabled", True)),
                     api_token=raw.get("api_token") or str(uuid.uuid4()),
                     expert_mode=bool(raw.get("expert_mode", False)),

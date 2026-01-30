@@ -18,11 +18,13 @@ from net.api_service import ApiService
 from theme import apply_theme
 from tray import TrayManager
 from ui_about import AboutDialog
+from ui_language import LanguageDialog
 from ui_main import MainWindow
 from ui_settings import SettingsDialog
 from util.images import app_icon
 from util.paths import ensure_dirs, history_path, logs_dir
 from util.sound import play_notification
+from util.i18n import set_language, t
 
 
 def setup_logging() -> None:
@@ -60,7 +62,7 @@ def _fallback_splash_pixmap(target_size: QSize, dpr: float) -> QPixmap:
     image.fill(QColor("#050607"))
     painter = QPainter(image)
     painter.setPen(QColor("#00ff66"))
-    painter.drawText(image.rect(), Qt.AlignCenter, "WALKÜR TECHNOLOGY\nLAN Chat")
+    painter.drawText(image.rect(), Qt.AlignCenter, t("splash.fallback_title"))
     painter.end()
     pixmap = QPixmap.fromImage(image)
     pixmap.setDevicePixelRatio(dpr)
@@ -90,12 +92,13 @@ def main() -> int:
     setup_logging()
     app = QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)
+    set_language("de-DE")
 
     splash = _create_splash(app)
     if splash:
         splash.show()
         splash.showMessage(
-            "Initialisiere Systeme…",
+            t("splash.init_systems"),
             alignment=Qt.AlignBottom | Qt.AlignHCenter,
             color=QColor("#00ff66"),
         )
@@ -103,6 +106,7 @@ def main() -> int:
 
     store = ConfigStore()
     store.load()
+    set_language(store.config.language or "de-DE")
     apply_theme(app, store.config.theme)
 
     icon = app_icon()
@@ -112,7 +116,7 @@ def main() -> int:
 
     if splash:
         splash.showMessage(
-            "Lade UI…",
+            t("splash.load_ui"),
             alignment=Qt.AlignBottom | Qt.AlignHCenter,
             color=QColor("#00ff66"),
         )
@@ -157,7 +161,7 @@ def main() -> int:
 
     if splash:
         splash.showMessage(
-            "Initialisiere Netzwerk…",
+            t("splash.init_network"),
             alignment=Qt.AlignBottom | Qt.AlignHCenter,
             color=QColor("#00ff66"),
         )
@@ -166,7 +170,7 @@ def main() -> int:
     network = LanChatNetwork(store)
     if splash:
         splash.showMessage(
-            "Lade Verlauf…",
+            t("splash.load_history"),
             alignment=Qt.AlignBottom | Qt.AlignHCenter,
             color=QColor("#00ff66"),
         )
@@ -265,9 +269,9 @@ def main() -> int:
         if not window.should_notify():
             return
         if store.config.tray_notifications and tray is not None:
-            name = msg.get("name") or "Neue Nachricht"
+            name = msg.get("name") or t("tray.new_message")
             if msg.get("t") == "FILE":
-                body = f"Datei: {msg.get('filename')}"
+                body = t("tray.file_message", filename=msg.get("filename"))
             else:
                 body = (msg.get("text") or "")[:120]
             tray.show_message(name, body)
@@ -375,17 +379,25 @@ def main() -> int:
                 window.add_message(msg, "", True)
                 history.append(dict(msg))
             except Exception:
-                window.show_status("Datei konnte nicht gesendet werden.")
+                window.show_status(t("status.send_file_failed"))
 
     def show_settings(force: bool = False) -> None:
         dlg = SettingsDialog(store, api_url=_api_url(), force=force, parent=window)
         dlg.saved.connect(lambda: network.send_hello())
         dlg.saved.connect(lambda: apply_theme(app, store.config.theme))
         dlg.saved.connect(apply_api_settings)
+        dlg.saved.connect(window.apply_translations)
+        dlg.saved.connect(lambda: tray.apply_translations() if tray is not None else None)
         dlg.exec()
 
     def show_about() -> None:
         dlg = AboutDialog(window)
+        dlg.exec()
+
+    def show_language_picker() -> None:
+        dlg = LanguageDialog(store, parent=window)
+        dlg.saved.connect(window.apply_translations)
+        dlg.saved.connect(lambda: tray.apply_translations() if tray is not None else None)
         dlg.exec()
 
     def quit_app() -> None:
@@ -451,9 +463,6 @@ def main() -> int:
 
     tray = TrayManager(icon, window, window.toggle_visibility, lambda: show_settings(False), show_about, quit_app)
 
-    if not store.config.first_run_complete:
-        show_settings(force=True)
-
     if splash:
         app.processEvents()
 
@@ -470,6 +479,8 @@ def main() -> int:
                 splash.deleteLater()
                 window.show()
                 window.activateWindow()
+                if not store.config.first_run_complete:
+                    QTimer.singleShot(0, show_language_picker)
 
             anim.finished.connect(_finish)
             anim.start(QAbstractAnimation.DeleteWhenStopped)
@@ -478,6 +489,8 @@ def main() -> int:
         QTimer.singleShot(0, start_splash_fade)
     else:
         window.show()
+        if not store.config.first_run_complete:
+            QTimer.singleShot(0, show_language_picker)
 
     exit_code = app.exec()
     save_geometry()
