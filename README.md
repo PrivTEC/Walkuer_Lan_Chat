@@ -7,14 +7,13 @@
 
   <hr>
   <p align="center">
-    <a href="https://github.com/PrivTEC/Walkuer_Lan_Chat/releases/tag/v1.0.0"
-      style="color:#3fb950; text-decoration:none;">
-      <strong style="font-size:1.3em; letter-spacing:0.5px;">
-        ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓<br>
-        ┃ ⬇ DOWNLOAD WINDOWS EXE v1.0.0 ┃<br>
-        ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+    ┏━━━━━━━━━━━━━━━━━┓<br>
+    ⬇ <a href="https://github.com/PrivTEC/Walkuer_Lan_Chat/releases/tag/v1.0.0">
+      <strong">
+          DOWNLOAD WINDOWS EXE v1.0.0<br>
       </strong>
     </a>
+    ┗━━━━━━━━━━━━━━━━━┛
   </p>
   <p align="center">
     Single-file executable · No installer · No server · No cloud
