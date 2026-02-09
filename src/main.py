@@ -277,6 +277,13 @@ def main() -> int:
             tray.show_message(name, body)
         play_notification(store.config.sound_enabled)
 
+    def _api_sender_name(name: str) -> str:
+        base_name = (name or "").strip() or t("user.unknown")
+        suffix = " (API)"
+        if base_name.endswith(suffix):
+            return base_name
+        return f"{base_name}{suffix}"
+
     def handle_incoming(msg: dict, sender_ip: str) -> None:
         msg = dict(msg)
         msg["sender_ip"] = sender_ip
@@ -306,8 +313,12 @@ def main() -> int:
         notify_if_needed(msg)
 
     def handle_send_text(payload: dict) -> None:
+        payload = dict(payload)
+        via_api = bool(payload.pop("_via_api", False))
         text = payload.get("text") or ""
         meta = {k: v for k, v in payload.items() if k != "text"}
+        if via_api:
+            meta["name"] = _api_sender_name(store.config.user_name)
         link_preview = meta.get("link_preview")
         if isinstance(link_preview, dict):
             thumb_path = link_preview.pop("thumb_path", "") or ""
@@ -329,6 +340,8 @@ def main() -> int:
             msg = network.send_chat(text)
         window.add_message(msg, "", True)
         history.append(dict(msg))
+        if via_api:
+            notify_if_needed(msg)
 
     def handle_edit_message(target_id: str, text: str) -> None:
         if not target_id:

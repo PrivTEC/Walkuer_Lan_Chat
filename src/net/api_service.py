@@ -192,6 +192,7 @@ class ApiService:
         send_payload = dict(payload)
         send_payload["text"] = text
         send_payload["message_id"] = message_id
+        send_payload["_via_api"] = True
         self._send_text(send_payload)
         return self._json_response(200, {"ok": True, "message_id": message_id})
 
